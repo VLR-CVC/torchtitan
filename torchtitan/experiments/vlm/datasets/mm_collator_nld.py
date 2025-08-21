@@ -5,8 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List
 
+import einops as E
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
@@ -20,6 +21,8 @@ from .utils.image import (
     pad_patches,
 )
 from .utils.text import pad_input_ids_and_labels_to_target_batch_size, pad_text_batch
+
+IGNORE_INDEX = -100
 
 
 @dataclass

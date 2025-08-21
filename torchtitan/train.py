@@ -4,9 +4,6 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-import pdb
-
-
 import importlib
 import os
 import time
@@ -423,6 +420,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
 
         # apply context parallelism if cp is enabled
         # ensure CP handles the separate freqs_cis buffer for each pp stage
+        inputs = input_dict["input"]
+        extra_inputs = {k: v for k, v in input_dict.items() if k != "input"}
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
                 cp_mesh=parallel_dims.world_mesh["cp"],
@@ -443,7 +442,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 )
                 if self.pp_has_first_stage:
                     self.pp_schedule.step(
-                        inputs, target=targets, losses=losses, input_batch=inputs
+                        inputs, **extra_inputs, target=targets, losses=losses, input_batch=inputs
                     )
                 else:
                     self.pp_schedule.step(
@@ -462,7 +461,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             with self.train_context(optional_context_parallel_ctx):
                 assert len(model_parts) == 1
                 with self.maybe_enable_amp:
-                    pred = model_parts[0](inputs)
+                    pred = model_parts[0](inputs, eos_id=self.tokenizer.eos_id, **extra_inputs)
                     loss = self.loss_fn(pred, labels)
                 # need to free to before bwd to avoid peaking memory
                 del pred
@@ -646,8 +645,6 @@ if __name__ == "__main__":
     config_manager = ConfigManager()
     config = config_manager.parse_args()
     trainer: Optional[Trainer] = None
-
-    pdb.set_trace()
 
     try:
         trainer = Trainer(config)

@@ -5,9 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
-import einops as E
 import torch
 from torch.nn.utils.rnn import pad_sequence
 

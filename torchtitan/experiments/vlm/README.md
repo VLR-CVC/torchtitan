@@ -15,7 +15,7 @@ This folder showcases how to train modern Vision Language Model (vlm) in torchti
 Distributed training usually does not play nice with input of varying shapes. To handle a varying number of images and image sizes, we requires two hyperparameters, image batch size `N` and image length `L` (in patches), and pad the actual image patches to this fixed size.
 Then we scatter the patch embeddings to their actual positions in the LLM input tokens.
 
-<img width="1398" height="840" alt="Screenshot 2025-08-21 at 16 21 57" src="https://github.com/user-attachments/assets/63fcbbc1-c587-4a63-8246-411cb72f5789" />
+<img width="398" height="840" alt="Screenshot 2025-08-21 at 16 21 57" src="https://github.com/user-attachments/assets/63fcbbc1-c587-4a63-8246-411cb72f5789" />
 
 - After `tok_embedding`, we obtain tokens of shape `BxS`.
 - After `encoder`, we obtain visual tokens of shape `NxL`.

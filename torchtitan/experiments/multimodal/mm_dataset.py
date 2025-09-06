@@ -28,6 +28,23 @@ def _load_obelics_dataset(dataset_path: str):
     """Load C4 dataset with default configuration."""
     return load_dataset(dataset_path, split="train", streaming=True)
 
+def _load_finevision_dataset(dataset_path: str):
+    """Load C4 dataset with default configuration."""
+    return load_dataset(dataset_path, name='CoSyn_400k_graphic', split="train", streaming=True)
+
+
+def _process_finevision(
+    sample: dict[str],
+    image_token: "<|image|>",
+):
+    sample_image = sample["image"]
+    sample_text = sample["text"]
+
+    return {
+        "images": [load_image(image) for image in sample_image],
+        "text": "".join(map(str, sample_text)),
+    }
+
 
 def _process_obelics_sample(
     sample: dict[str, Any], image_token: str = "<|image|>"
@@ -59,6 +76,12 @@ MM_DATASETS = {
         path="HuggingFaceM4/OBELICS",
         loader=_load_obelics_dataset,
         sample_processor=_process_obelics_sample,
+    ),
+
+    "finevision": DatasetConfig(
+        path="/home/datasets/Finevision",
+        loader=_load_finevision_dataset,
+        sample_processor=_process_finevision,
     ),
 }
 

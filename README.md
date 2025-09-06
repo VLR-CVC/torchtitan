@@ -5,12 +5,13 @@
 ## VLR torchtitan clone that we modify according to our needs
 
 Current features:
-- more documentation (code comments explaining stuff)
-- own docs folder
+- WIP
 
-Planned features:
-- `SmolVLM` training and evaluation
-- `Qwen 2.5VL` training and evaluation
+Future features:
+- [ ] `Llama3 + SigLip` training and evaluation (variable resolution)
+- [ ] `SmolVLM` training and evaluation (HF port)
+- [ ] `Qwen 2.5VL` training and evaluation (HF port)
+- [ ] own docs folder
 
 
 ---

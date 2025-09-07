@@ -74,6 +74,8 @@ class Model:
 
     flavor: str = "debugmodel"
     """Which model config to train"""
+    # a model will always need to be registed in an __init__.py file
+    # in its respective folder.
 
     hf_assets_path: str = "./tests/assets/tokenizer"
     """
@@ -249,6 +251,7 @@ class Parallelism:
     enable_compiled_autograd: bool = False
     """Enable CompiledAutograd to compile the backward."""
 
+    # enabled by default to use all available ranks
     data_parallel_shard_degree: int = -1
     """
     The `data_parallel_shard_degree` argument specifies the degree of data
@@ -274,12 +277,19 @@ class Parallelism:
     - "never" will disable `reshard_after_forward` for all forward passes.
     """
 
+    # TP will be applied by default in the first dim of the device mesh
+    # TP here is equivalent to SP.
+
+    # This integer is equivalent to the number of GPUs whithin the node
+    # that will share have the sharded tensors.
     tensor_parallel_degree: int = 1
     """Tensor Parallelism degree. 1 means disabled."""
 
+    # loss parallel is enabled by default when using TP/SP
     disable_loss_parallel: bool = False
     """Whether to apply loss parallel when sequence parallel is enabled"""
 
+    # uses compiler functionality (AsyncTP)
     enable_async_tensor_parallel: bool = False
     """Whether to apply async tensor parallel (currently only effective when compile is enabled)"""
 
@@ -355,6 +365,7 @@ class Parallelism:
     The global training batch size must be evenly divisible by pipeline_parallel_microbatch_size.
     """
 
+    # uses context managers to replace calls, that way model code can remain unchanged.
     context_parallel_degree: int = 1
     """Context parallelism degree. 1 means disabled."""
 

@@ -26,6 +26,10 @@ def _load_c4_dataset(dataset_path: str, split: str):
     """Load C4 dataset with default configuration."""
     return load_dataset(dataset_path, name="en", split=split, streaming=True)
 
+def _load_c4_mini_dataset(dataset_path: str, split: str):
+    """Load C4 dataset with default configuration."""
+    return load_dataset("/data/users/tockier/c4/", data_files="en/c4-train.00002-of-01024.json.gz", streaming=True)
+
 
 def _process_c4_text(sample: dict[str, Any]) -> str:
     """Process C4 dataset sample text."""
@@ -56,6 +60,11 @@ DATASETS = {
         loader=partial(_load_c4_dataset, split="validation"),
         text_processor=_process_c4_text,
     ),
+    "c4_mini": DatasetConfig(
+        path="allenai/c4",
+        loader=partial(_load_c4_mini_dataset, split="train"),
+        text_processor=_process_c4_text,
+    )
 }
 
 

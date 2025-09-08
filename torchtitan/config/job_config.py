@@ -234,7 +234,11 @@ class Training:
     deterministic: bool = False
     """Use deterministic algorithms wherever possible, may be slower"""
 
+"""
+MUST BE EQUAL TO WORLD SIZE
 
+assert dp_replicate * dp_shard * cp * tp * pp == self.world_size
+"""
 @dataclass
 class Parallelism:
     data_parallel_replicate_degree: int = 1

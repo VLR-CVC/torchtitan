@@ -114,7 +114,7 @@ def get_peak_flops(device_name: str) -> int:
         # Standard EU mode (i.e. 448 max compute units): 298.2 TFLOPS (BF16)
         max_comp_units = torch.xpu.get_device_properties("xpu").max_compute_units
         return 512 * max_comp_units * 1300 * 10**6
-    elif "l40s" in device_name:
+    elif "L40S" in device_name:
         # data from: "https://resources.nvidia.com/en-us-l40s/l40s-datasheet-28413"
         return 362e12
     elif "TITAN XP" in device_name:

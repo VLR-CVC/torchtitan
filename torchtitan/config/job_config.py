@@ -196,7 +196,12 @@ class Training:
     """Max norm for gradient clipping"""
 
     steps: int = 10000
-    """How many train steps to run"""
+    """
+    How many train steps to run. If checkpoiting enabled, this number will indicate the max number of steps
+    to train to. If the model is already saved at step 1000, and this param is set to 1000,
+    it will not train anymore as the target amount of steps will be reach. It will need to be increased
+    to 1500 to do 500 more steps.
+    """
 
     enable_cpu_offload: bool = False
     """

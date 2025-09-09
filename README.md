@@ -5,7 +5,8 @@
 ## VLR torchtitan clone that we modify according to our needs
 
 Current features:
-- WIP
+- explanation of config params
+- training of Llama3.2-1B in CVC cluster
 
 Future features:
 - [ ] `Llama3 + SigLip` training and evaluation (variable resolution)

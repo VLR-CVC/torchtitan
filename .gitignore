@@ -15,6 +15,10 @@ wandb
 
 torchtitan/datasets/**/*.model
 
+# venv
+uv.lock
+*.lock
+
 # hf assets
 assets/hf/*
 assets/tokenizer/*

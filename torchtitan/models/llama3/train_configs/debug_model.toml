@@ -15,7 +15,7 @@ log_freq = 1
 disable_color_printing = false
 enable_tensorboard = false
 save_tb_folder = "tb"
-enable_wandb = false
+enable_wandb = true
 
 [model]
 name = "llama3"
@@ -37,9 +37,9 @@ min_lr_factor = 0.0
 
 [training]
 local_batch_size = 1
-seq_len = 2048
+seq_len = 1024
 max_norm = 1.0  # grad norm clipping
-steps = 10
+steps = 1000
 dataset = "c4_test"  # supported datasets: c4_test (2K), c4 (177M)
 
 [parallelism]
@@ -54,17 +54,17 @@ context_parallel_degree = 1
 [checkpoint]
 enable = false
 folder = "checkpoint"
-interval = 10
+interval = 100
 last_save_model_only = false
 export_dtype = "float32"
 async_mode = "disabled"  # ["disabled", "async", "async_with_pinned_mem"]
 
 [activation_checkpoint]
-mode = "selective"  # ["none", "selective", "full"]
+mode = "full"  # ["none", "selective", "full"]
 selective_ac_option = '2'  # 'int' = ac every positive int layer or 'op', ac based on ops policy
 
 [compile]
-enable=false
+enable=true
 components = ["model", "loss"]
 
 [float8]

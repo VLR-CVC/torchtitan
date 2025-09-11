@@ -64,7 +64,7 @@ class GarbageCollection:
 
 
 # hardcoded BF16 type peak flops for NVIDIA A100, H100, H200, B200 GPU and AMD MI250, MI300X, AMD MI325X and Intel PVC
-def get_peak_flops(device_name: str) -> int:
+def get_peak_flops(device_name: str) -> float:
     try:
         # Run the lspci command and capture the output
         result = subprocess.run(["lspci"], stdout=subprocess.PIPE, text=True)
@@ -116,6 +116,9 @@ def get_peak_flops(device_name: str) -> int:
     elif "L40S" in device_name:
         # data from: "https://resources.nvidia.com/en-us-l40s/l40s-datasheet-28413"
         return 362e12
+    elif "A40":
+        # data from: https://images.nvidia.com/content/Solutions/data-center/a40/nvidia-a40-datasheet.pdf
+        return 149e12
     elif "TITAN XP" in device_name:
         # data from: "https://www.techpowerup.com/gpu-specs/titan-xp.c2948"
         return 12e12

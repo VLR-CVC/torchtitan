@@ -154,6 +154,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         logger.info(
             f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
         )
+
+        # META init
         with torch.device("meta"):
             model = self.train_spec.model_cls(model_args)
 

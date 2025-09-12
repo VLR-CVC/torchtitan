@@ -5,6 +5,7 @@ from torch.utils.data import IterableDataset, Dataset
 from torchtitan.components.dataloader import ParallelAwareDataloader
 from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.datasets.hf_datasets import DATASETS, _validate_dataset
+from torchtitan.experiments.multimodal.transform import CLIPTransform
 from torchtitan.tools.logging import logger
 from torchtitan.config import JobConfig
 
@@ -44,6 +45,21 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
         # TODO: see what this is (numerically)
         self.prefix_len = self._get_prefix_len()
+
+        # MAGIC NUMBERS
+        self.transform_image = CLIPTransform(
+            image_mean=(
+                0.48145466,
+                0.4578275,
+                0.40821073,
+            ),  # TODO(tj.solergibert) What should we do with `image_mean` & `image_std`?,
+            image_std=(0.26862954, 0.26130258, 0.27577711),
+            tile_size=tile_size,
+            possible_resolutions=None,
+            max_num_tiles=max_num_tiles,
+            resample="bilinear",
+            resize_to_max_canvas=False,
+        )
 
     def _get_prefix_len(self):
         random_string_5_letters = "xzyvd"
@@ -104,12 +120,16 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
                 # is really neccesary a long tensor?
                 input_ids = torch.LongTensor(tokens[:-1])
+
+                # we need to mask out the assistant tokens
+                messages = self._get_messages(sample)
+                mask = self._apply_template_and_create_mask(messages)
                 labels = self._get_labels(input_ids, mask)
 
                 yield {
                     "images": processed_images,
                     "input_ids": input_ids,
-                    # "attention_mask": attention_mask, dont think is neccesary
+                    "attention_mask": mask,
                     "labels": labels,
                 }
 
@@ -148,6 +168,18 @@ class Multimodal_dataset(IterableDataset, Stateful):
             torch.tensor(mask).to(torch.bool),
             torch.tensor(conversation_ids["attention_mask"]),
         )
+
+    def _get_messages(self, item):
+        """
+        we need to divide the sample into the different messages
+        """
+
+        messages = []
+        for text in item["texts"]:
+            messages.append({"role": "user", "content": text["user"]})
+            messages.append({"role": "assistant", "content": text["assistant"]})
+
+        return messages
 
     # from nanoVLM
     # https://github.com/huggingface/nanoVLM/blob/9de5e17ac2f4c578c32085131d966464cdd252b5/data/datasets.py#L146C5-L151C22

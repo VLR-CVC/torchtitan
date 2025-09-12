@@ -19,7 +19,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
         tokenizer: BaseTokenizer,
         seq_len: int = 2048,
         dp_rank: int = 0,
-        dp_world_size: bool = False,
+        dp_world_size: int = 0,
         infinite: bool = False,
     ) -> None:
         dataset_name = dataset_name.lower()
@@ -41,6 +41,25 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
         self._sample_idx = 0
         self._token_buffer: list[int] = []
+
+        # TODO: see what this is (numerically)
+        self.prefix_len = self._get_prefix_len()
+
+    def _get_prefix_len(self):
+        random_string_5_letters = "xzyvd"
+        random_string_chat_templated = self._tokenizer.apply_chat_template(
+            [{"role": "assistant", "content": random_string_5_letters}],
+            tokenize=False,
+            add_special_tokens=False,
+        )
+        random_string_location = random_string_chat_templated.find(
+            random_string_5_letters
+        )
+        return len(
+            self._tokenizer.encode(
+                random_string_chat_templated[:random_string_location]
+            )
+        )
 
     def _get_data_iter(self):
         # For map-style datasets, resume by skipping to the correct index
@@ -68,9 +87,76 @@ class Multimodal_dataset(IterableDataset, Stateful):
                 self._sample_idx += 1
                 # the batch is prepared to fill the max amount of tokens
 
-                encoder_input = {"images": [], "aspect_ratio": []}
+                processed_images = []
                 for image in sample["images"]:
                     logger.warning(image.shape)
+                    # TODO: load images and process
+
+                    # this image is a tensor, apply torch transform
+                    processed_images.append(image)
+
+                tokens = self._tokenizer.encode(
+                    sample["text"],
+                    add_bos=True,
+                    add_eos=True,
+                    allowed_special=set(["<|image|>"]),
+                )
+
+                # is really neccesary a long tensor?
+                input_ids = torch.LongTensor(tokens[:-1])
+                labels = self._get_labels(input_ids, mask)
+
+                yield {
+                    "images": processed_images,
+                    "input_ids": input_ids,
+                    # "attention_mask": attention_mask, dont think is neccesary
+                    "labels": labels,
+                }
+
+    # from nanoVLM
+    def _apply_template_and_create_mask(self, messages):
+        conversation_ids = self._tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_special_tokens=False,  # no need since this is just to create a mask
+            return_dict=True,
+        )
+
+        # start with blank mask
+        mask = [0] * len(conversation_ids["input_ids"])
+
+        cursor = 0
+        # we need to mask out the assistant messages
+        for msg in messages:
+            segment_ids = self._tokenizer.apply_chat_template(
+                [msg],
+                tokenize=True,
+                add_special_tokens=False,
+            )
+
+            seq_len = len(segment_ids)
+
+            if msg["role"] == "assistant":
+                start = cursor + self.prefix_len
+                end = cursor + seq_len
+                mask[start:end] = [1] * (end - start)
+
+            cursor += seq_len
+
+        return (
+            torch.tensor(conversation_ids["input_ids"]),
+            torch.tensor(mask).to(torch.bool),
+            torch.tensor(conversation_ids["attention_mask"]),
+        )
+
+    # from nanoVLM
+    # https://github.com/huggingface/nanoVLM/blob/9de5e17ac2f4c578c32085131d966464cdd252b5/data/datasets.py#L146C5-L151C22
+    def _get_labels(self, input_ids, mask):
+        labels = input_ids.clone().masked_fill(~mask, -100)
+        labels = labels.roll(-1)  # Shift labels for causal LM
+        labels[-1] = -100  # Last token has no target
+
+        return labels
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self._token_buffer = state_dict["token_buffer"]
@@ -109,7 +195,15 @@ def build_mm_dataloader(
     batch_size = job_config.training.local_batch_size
     seq_len = job_config.training.seq_len
 
-    ds = Multimodal_dataset()
+    ds = Multimodal_dataset(
+        dataset_name=dataset_name,
+        dataset_path=dataset_path,
+        tokenizer=tokenizer,
+        infinite=infinite,
+        seq_len=seq_len,
+        dp_rank=dp_rank,
+        dp_world_size=dp_world_size,
+    )
 
     collate_fn = MM_Collator()
 

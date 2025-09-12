@@ -71,6 +71,9 @@ class ParallelAwareDataloader(StatefulDataLoader, BaseDataLoader):
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
         self.batch_size = batch_size
+        
+        # the iter method is automatically build,
+        # it NEEDS the collate fn
         super().__init__(dataset, batch_size, collate_fn=collate_fn)
         self._rank_id = f"dp_rank_{dp_rank}"
 
@@ -99,6 +102,8 @@ class ParallelAwareDataloader(StatefulDataLoader, BaseDataLoader):
             "dp_degree is inconsistent before and after checkpoint, "
             "dataloader resharding is not supported yet."
         )
+
+        # TODO: see if this pickle usage should be changed
         # We don't have to use pickle as DCP will serialize the state_dict. However, we have to
         # keep this for backward compatibility.
         super().load_state_dict(pickle.loads(state_dict[self._rank_id]))

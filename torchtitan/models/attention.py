@@ -11,7 +11,7 @@ from typing import Callable, ClassVar
 
 import torch
 import torch.nn.functional as F
-#from torch.distributed.tensor.experimental._attention import create_cp_block_mask
+from torch.distributed.tensor.experimental._attention import create_cp_block_mask
 from torch.nn.attention import sdpa_kernel, SDPBackend
 from torch.nn.attention.flex_attention import (
     _mask_mod_signature,

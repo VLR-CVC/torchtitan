@@ -43,6 +43,16 @@ def find_tensor_match_all(
 
 
 class Multimodal_dataset(IterableDataset, Stateful):
+    """
+    Works for a single images. Concats all of the text, including the separators for the user
+    messages and the assistant messages (see CHAT_TEMPLATE).
+
+    Labels are provided to make the Next Token Prediction task, only showing the IDs of the answers,
+    which is the part of the text that the model would have to learn to predict.
+
+    The loss should be defined only over this tokens [citation needed].
+    """
+
     def __init__(
         self,
         dataset_name: str,
@@ -187,6 +197,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
         return labels
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        # TODO: needs testing
         self._token_buffer = state_dict["token_buffer"]
         self._sample_idx = state_dict["sample_idx"]
 

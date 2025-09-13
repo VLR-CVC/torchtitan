@@ -11,17 +11,49 @@ from torchtitan.config import JobConfig
 
 from datasets.distributed import split_dataset_by_node
 
+CHAT_TEMPLATE = "{%- for message in messages %}{{'<|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
+
+
+def find_tensor_match_all(
+    subsequence_tensor: torch.Tensor, main_tensor: torch.Tensor
+) -> torch.Tensor:
+    """
+    Finds all occurrences of a subsequence tensor within a main tensor. Used for the creation of a mask.
+    """
+    sub_len = len(subsequence_tensor)
+    main_len = len(main_tensor)
+
+    assert sub_len < main_len
+
+    if sub_len > main_len:
+        return torch.zeros(main_len, dtype=torch.bool)
+
+    all_possible_slices = main_tensor.unfold(0, sub_len, 1)
+
+    comparison_result = torch.eq(all_possible_slices, subsequence_tensor)
+    is_match_start = torch.all(comparison_result, dim=1)
+
+    output_tensor = torch.zeros(main_len, dtype=torch.bool)
+    start_indices = torch.nonzero(is_match_start, as_tuple=True)[0]
+
+    for start_index in start_indices:
+        output_tensor[start_index : start_index + sub_len] = True
+
+    return output_tensor
+
 
 class Multimodal_dataset(IterableDataset, Stateful):
     def __init__(
         self,
         dataset_name: str,
         dataset_path: str | None,
-        tokenizer: BaseTokenizer,
+        tokenizer: Tokenizer,
         seq_len: int = 2048,
         dp_rank: int = 0,
-        dp_world_size: int = 0,
+        dp_world_size: int = 1,  # Default to 1 for single-process testing
         infinite: bool = False,
+        tile_size: int = 224,  # Added default value
+        max_num_tiles: int = 1,  # Added default value
     ) -> None:
         dataset_name = dataset_name.lower()
 
@@ -43,16 +75,9 @@ class Multimodal_dataset(IterableDataset, Stateful):
         self._sample_idx = 0
         self._token_buffer: list[int] = []
 
-        # TODO: see what this is (numerically)
-        self.prefix_len = self._get_prefix_len()
-
         # MAGIC NUMBERS
         self.transform_image = CLIPTransform(
-            image_mean=(
-                0.48145466,
-                0.4578275,
-                0.40821073,
-            ),  # TODO(tj.solergibert) What should we do with `image_mean` & `image_std`?,
+            image_mean=(0.48145466, 0.4578275, 0.40821073),
             image_std=(0.26862954, 0.26130258, 0.27577711),
             tile_size=tile_size,
             possible_resolutions=None,
@@ -61,154 +86,115 @@ class Multimodal_dataset(IterableDataset, Stateful):
             resize_to_max_canvas=False,
         )
 
-    def _get_prefix_len(self):
-        random_string_5_letters = "xzyvd"
-        random_string_chat_templated = self._tokenizer.apply_chat_template(
-            [{"role": "assistant", "content": random_string_5_letters}],
-            tokenize=False,
-            add_special_tokens=False,
-        )
-        random_string_location = random_string_chat_templated.find(
-            random_string_5_letters
-        )
-        return len(
-            self._tokenizer.encode(
-                random_string_chat_templated[:random_string_location]
-            )
-        )
-
     def _get_data_iter(self):
-        # For map-style datasets, resume by skipping to the correct index
-        # For iterable-style datasets, the underlying iterator already points to the correct index
-        if isinstance(self._data, Dataset):
-            if self._sample_idx == len(self._data):
-                return iter([])
-            else:
-                return iter(self._data.skip(self._sample_idx))
+        if isinstance(self._data, Dataset) and self._sample_idx == len(self._data):
+            return iter([])
 
-        return iter(self._data)
+        it = iter(self._data)
+        for _ in range(self._sample_idx):
+            next(it)
+        return it
 
     def __iter__(self):
-        max_buffer_token_len = 1 + self.seq_len
-
         while True:
-            # we change the type of iter depending on the type of dataset
-            for sample in self._get_data_iter():
-                # raw text input (should include `<|image|>`)
-                sample_input = self._process_sample(sample)
-                sample_tokens = self._tokenizer.encode(
-                    sample_input, add_bos=True, add_eos=True
-                )
-                self._token_buffer.extend(sample_tokens)
-                self._sample_idx += 1
-                # the batch is prepared to fill the max amount of tokens
+            data_iter = self._get_data_iter()
+            if not (sample := next(data_iter, None)):  # Check for end of iterator
+                if self.infinite:
+                    self._sample_idx = 0
+                    continue
+                else:
+                    break
 
-                processed_images = []
-                for image in sample["images"]:
-                    logger.warning(image.shape)
-                    # TODO: load images and process
+            processed_images = [self.transform_image(img) for img in sample["images"]]
 
-                    # this image is a tensor, apply torch transform
-                    processed_images.append(image)
+            messages = self._get_messages(sample)
 
-                tokens = self._tokenizer.encode(
-                    sample["text"],
-                    add_bos=True,
-                    add_eos=True,
-                    allowed_special=set(["<|image|>"]),
-                )
+            conversation_ids, mask, attention_mask = (
+                self._apply_template_and_create_mask(messages)
+            )
 
-                # is really neccesary a long tensor?
-                input_ids = torch.LongTensor(tokens[:-1])
+            labels = self._get_labels(conversation_ids, mask)
 
-                # we need to mask out the assistant tokens
-                messages = self._get_messages(sample)
-                mask = self._apply_template_and_create_mask(messages)
-                labels = self._get_labels(input_ids, mask)
+            yield {
+                "images": processed_images,
+                "input_ids": conversation_ids,
+                "attention_mask": attention_mask,
+                "labels": labels,
+            }
 
-                yield {
-                    "images": processed_images,
-                    "input_ids": input_ids,
-                    "attention_mask": mask,
-                    "labels": labels,
-                }
+    def process_sample(self, sample):
+        processed_images = [self.transform_image(img) for img in sample["images"]]
 
-    # from nanoVLM
+        messages = self._get_messages(sample)
+
+        conversation_ids, mask, attention_mask = self._apply_template_and_create_mask(
+            messages
+        )
+
+        labels = self._get_labels(conversation_ids, mask)
+
+        return {
+            "images": processed_images,
+            "input_ids": conversation_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
     def _apply_template_and_create_mask(self, messages):
-        conversation_ids = self._tokenizer.apply_chat_template(
+        conv_ids = self._tokenizer.apply_chat_template(
             messages,
             tokenize=True,
-            add_special_tokens=False,  # no need since this is just to create a mask
+            add_special_tokens=False,
             return_dict=True,
         )
 
-        # start with blank mask
-        mask = [0] * len(conversation_ids["input_ids"])
-
-        cursor = 0
-        # we need to mask out the assistant messages
+        masks = []
         for msg in messages:
-            segment_ids = self._tokenizer.apply_chat_template(
-                [msg],
-                tokenize=True,
-                add_special_tokens=False,
+            all_ids = torch.tensor(
+                self._tokenizer.apply_chat_template(
+                    [msg], tokenize=True, add_generation_prompt=False
+                ),
+                dtype=torch.uint64,
             )
 
-            seq_len = len(segment_ids)
+            ass_ids = torch.tensor(
+                self._tokenizer.encode(msg["assistant"]), dtype=torch.uint64
+            )
 
-            if msg["role"] == "assistant":
-                start = cursor + self.prefix_len
-                end = cursor + seq_len
-                mask[start:end] = [1] * (end - start)
+            tmp_mask = find_tensor_match_all(ass_ids, all_ids)
 
-            cursor += seq_len
+            assert all_ids.shape == tmp_mask.shape
+
+            masks.append(tmp_mask)
+
+        mask = torch.cat(masks)
+        # the mask that is passed is for the whole image, not just one Q/A pair
+        assert len(conv_ids["input_ids"]) == mask.shape[0]
 
         return (
-            torch.tensor(conversation_ids["input_ids"]),
-            torch.tensor(mask).to(torch.bool),
-            torch.tensor(conversation_ids["attention_mask"]),
+            torch.tensor(conv_ids["input_ids"]),
+            mask,
+            torch.tensor(conv_ids["attention_mask"]),
         )
 
     def _get_messages(self, item):
-        """
-        we need to divide the sample into the different messages
-        """
+        return item["texts"]
 
-        messages = []
-        for text in item["texts"]:
-            messages.append({"role": "user", "content": text["user"]})
-            messages.append({"role": "assistant", "content": text["assistant"]})
-
-        return messages
-
-    # from nanoVLM
-    # https://github.com/huggingface/nanoVLM/blob/9de5e17ac2f4c578c32085131d966464cdd252b5/data/datasets.py#L146C5-L151C22
     def _get_labels(self, input_ids, mask):
         labels = input_ids.clone().masked_fill(~mask, -100)
-        labels = labels.roll(-1)  # Shift labels for causal LM
-        labels[-1] = -100  # Last token has no target
-
+        labels = labels.roll(-1, dims=0)
+        labels[-1] = -100  # last token has no target
         return labels
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self._token_buffer = state_dict["token_buffer"]
-
-        if isinstance(self._data, Dataset):
-            self._sample_idx = state_dict["sample_idx"]
-        else:
-            assert "data" in state_dict
-            self._data.load_state_dict(state_dict["data"])
+        self._sample_idx = state_dict["sample_idx"]
 
     def state_dict(self) -> dict[str, Any]:
-        # definition of the state_dict
-        _state_dict = {"toke_buffer": self._token_buffer}
-
-        if isinstance(self._data, Dataset):
-            _state_dict["sample_idx"] = self._sample_idx
-        else:
-            _state_dict["data"] = self._data.state_dict()
-
-        return _state_dict
+        return {
+            "token_buffer": self._token_buffer,
+            "sample_idx": self._sample_idx,
+        }
 
 
 def build_tokenizer(config):

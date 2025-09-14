@@ -18,6 +18,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import load_model, save_model
 
+def create_pixel_attention_mask_vectorized(
+    image_sizes: list[tuple[int, int]], device=None
+) -> torch.Tensor:
+    """
+    To allow images of different dimns and aspect sized into the same batch, we need to add padding
+    up to the maximum size found in each side (H and W).
+
+    For that we need to create a mask to distinguish to pad patches from the real ones.
+    """
+    if not image_sizes:
+        return torch.empty(0, 0, 0, dtype=torch.bool, device=device)
+
+    batch_size = len(image_sizes)
+    max_h = max(h for h, _ in image_sizes)
+    max_w = max(w for _, w in image_sizes)
+
+    heights = torch.tensor([h for h, w in image_sizes], device=device).view(batch_size, 1, 1)
+    widths = torch.tensor([w for h, w in image_sizes], device=device).view(batch_size, 1, 1)
+
+    h_range = torch.arange(max_h, device=device).view(1, max_h, 1)
+    w_range = torch.arange(max_w, device=device).view(1, 1, max_w)
+
+    h_mask = h_range < heights
+    w_mask = w_range < widths
+
+    return h_mask & w_mask
 class VisionLanguageModel(nn.Module):
     def __init__(self, cfg: VLMConfig, load_backbone=True):
         super().__init__()
@@ -48,6 +74,9 @@ class VisionLanguageModel(nn.Module):
 
         return updated_token_embd
 
+    """
+    The images should come in as tensors [B, 3, H, W].
+    """
     def _process_images(self, images, device):
         if isinstance(images, list):
             if images and isinstance(images[0], list):

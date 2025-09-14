@@ -38,14 +38,14 @@ def _load_finevision(dataset_path: str, split: str):
 
 
 def _process_finevision(
-    sample: dict[str, Any],
+    sample: dict[str, list[str] | list[torch.Tensor]],
 ):
     sample_image = sample["images"]
-    sample_text = sample["text"]
+    sample_texts = sample["texts"]
 
     return {
         "images": [load_image(image) for image in sample_image],
-        "text": "".join(map(str, sample_text)),
+        "texts": [str(text) for text in sample_texts],
     }
 
 
@@ -56,6 +56,7 @@ class DatasetConfig:
     text_processor: Callable
 
 
+# TODO: see what `partial` does here
 # Add your dataset here here - more information at docs/datasets.md
 DATASETS = {
     "c4": DatasetConfig(

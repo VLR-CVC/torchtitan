@@ -11,6 +11,8 @@ from torchtitan.config import JobConfig
 
 from datasets.distributed import split_dataset_by_node
 
+from typing import Any
+
 CHAT_TEMPLATE = "{%- for message in messages %}{{'<|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
 
 
@@ -68,7 +70,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
         dataset_name = dataset_name.lower()
 
         # they come from the dataset config
-        path, dataset_loader, process_sample = _validate_dataset(
+        path, dataset_loader, sample_processor = _validate_dataset(
             dataset_name, dataset_path
         )
 
@@ -80,7 +82,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
         self._tokenizer = tokenizer
         self.seq_len = seq_len
         self.infinite = infinite
-        self._process_sample = process_sample
+        self._sample_processor = sample_processor
 
         self._sample_idx = 0
         self._token_buffer: list[int] = []
@@ -105,7 +107,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
             next(it)
         return it
 
-    def __iter__(self):
+    def __iter__(self) -> dict[str, Any]:
         while True:
             data_iter = self._get_data_iter()
             if not (sample := next(data_iter, None)):  # Check for end of iterator
@@ -115,24 +117,12 @@ class Multimodal_dataset(IterableDataset, Stateful):
                 else:
                     break
 
-            processed_images = [self.transform_image(img) for img in sample["images"]]
+            yield self.process_sample(sample)
 
-            messages = self._get_messages(sample)
+    def process_sample(self, sample) -> dict[str, Any]:
+        # gives dict[str, list[str] | list[torch.Tensor]]
+        sample = self._sample_processor(sample)
 
-            conversation_ids, mask, attention_mask = (
-                self._apply_template_and_create_mask(messages)
-            )
-
-            labels = self._get_labels(conversation_ids, mask)
-
-            yield {
-                "images": processed_images,
-                "input_ids": conversation_ids,
-                "attention_mask": attention_mask,
-                "labels": labels,
-            }
-
-    def process_sample(self, sample):
         processed_images = [self.transform_image(img) for img in sample["images"]]
 
         messages = self._get_messages(sample)
@@ -143,6 +133,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
         labels = self._get_labels(conversation_ids, mask)
 
+        # the image shapes are calculated later on
         return {
             "images": processed_images,
             "input_ids": conversation_ids,

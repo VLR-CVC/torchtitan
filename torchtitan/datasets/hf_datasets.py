@@ -32,7 +32,31 @@ def _process_c4_text(sample: dict[str, Any]) -> str:
     return sample["text"]
 
 
-# Add your dataset here - more information at docs/datasets.md
+def _load_finevision(dataset_path: str, split: str):
+    return load_dataset(dataset_path, split=split, streaming=True)
+
+
+def _process_finevision(
+    sample: dict[str, list[str] | list[torch.Tensor]],
+):
+    sample_image = sample["images"]
+    sample_texts = sample["texts"]
+
+    return {
+        "images": [load_image(image) for image in sample_image],
+        "texts": [str(text) for text in sample_texts],
+    }
+
+
+@dataclass
+class DatasetConfig:
+    path: str
+    loader: Callable
+    text_processor: Callable
+
+
+# TODO: see what `partial` does here
+# Add your dataset here here - more information at docs/datasets.md
 DATASETS = {
     "c4": DatasetConfig(
         path="allenai/c4",

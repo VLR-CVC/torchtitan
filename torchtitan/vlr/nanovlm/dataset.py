@@ -10,10 +10,16 @@ from torchtitan.tools.logging import logger
 from torchtitan.config import JobConfig
 
 from datasets.distributed import split_dataset_by_node
+from tokenizers import Tokenizer
 
 from typing import Any
 
-CHAT_TEMPLATE = "{%- for message in messages %}{{'<|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
+from collator import MultiModalCollator
+
+CHAT_TEMPLATE = "{%- for message in messages %}{{'<image><|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
+
+IGNORE_INDEX = -100
+IMAGE_TOKEN_ID = 49190
 
 
 def find_tensor_match_all(
@@ -107,7 +113,7 @@ class Multimodal_dataset(IterableDataset, Stateful):
             next(it)
         return it
 
-    def __iter__(self) -> dict[str, Any]:
+    def __iter__(self):
         while True:
             data_iter = self._get_data_iter()
             if not (sample := next(data_iter, None)):  # Check for end of iterator
@@ -125,6 +131,10 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
         processed_images = [self.transform_image(img) for img in sample["images"]]
 
+        images, aspect_ratios = processed_images
+
+        assert len(images), len(aspect_ratios)
+
         messages = self._get_messages(sample)
 
         conversation_ids, mask, attention_mask = self._apply_template_and_create_mask(
@@ -135,17 +145,23 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
         # the image shapes are calculated later on
         return {
-            "images": processed_images,
+            "encoder_inputs": {
+                "images": images,
+                "aspect_ratios": aspect_ratios,
+            },
             "input_ids": conversation_ids,
             "attention_mask": attention_mask,
             "labels": labels,
         }
 
     def _apply_template_and_create_mask(self, messages):
+        """
+        Adding BOS and EOS tokens and applies the conversation turns.
+        """
         conv_ids = self._tokenizer.apply_chat_template(
             messages,
             tokenize=True,
-            add_special_tokens=False,
+            add_special_tokens=True,
             return_dict=True,
         )
 
@@ -168,13 +184,29 @@ class Multimodal_dataset(IterableDataset, Stateful):
 
             masks.append(tmp_mask)
 
-        mask = torch.cat(masks)
+        labels = torch.cat(masks)
         # the mask that is passed is for the whole image, not just one Q/A pair
-        assert len(conv_ids["input_ids"]) == mask.shape[0]
+        assert len(conv_ids["input_ids"]) == labels.shape[0]
+
+        # Mask BOS, EOS & image tokens from the loss
+        labels = torch.where(
+            torch.isin(
+                labels,
+                torch.LongTensor(
+                    [
+                        self._tokenizer.bos_id,
+                        self._tokenizer.eos_id,
+                        self._tokenizer.image_id,
+                    ]
+                ),
+            ),
+            IGNORE_INDEX,
+            labels,
+        )
 
         return (
             torch.tensor(conv_ids["input_ids"]),
-            mask,
+            labels,
             torch.tensor(conv_ids["attention_mask"]),
         )
 
@@ -182,9 +214,9 @@ class Multimodal_dataset(IterableDataset, Stateful):
         return item["texts"]
 
     def _get_labels(self, input_ids, mask):
-        labels = input_ids.clone().masked_fill(~mask, -100)
+        labels = input_ids.clone().masked_fill(~mask, IGNORE_INDEX)
         labels = labels.roll(-1, dims=0)
-        labels[-1] = -100  # last token has no target
+        labels[-1] = IGNORE_INDEX  # last token has no target
         return labels
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
@@ -214,6 +246,10 @@ def build_mm_dataloader(
     dataset_path = job_config.training.dataset_path
     batch_size = job_config.training.local_batch_size
     seq_len = job_config.training.seq_len
+    pad_max_tiles = 4
+
+    # special token 1
+    padding_idx = 49191
 
     ds = Multimodal_dataset(
         dataset_name=dataset_name,
@@ -225,7 +261,10 @@ def build_mm_dataloader(
         dp_world_size=dp_world_size,
     )
 
-    collate_fn = MM_Collator()
+    collate_fn = MultiModalCollator(
+            padding_idx=padding_idx,
+            pad_max_tiles=pad_max_tiles,
+    )
 
     # this is a titan component
     return ParallelAwareDataloader(

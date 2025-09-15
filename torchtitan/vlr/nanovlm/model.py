@@ -4,6 +4,7 @@ import tempfile
 from dataclasses import asdict
 from typing import Optional
 
+import math  # TODO: take out
 
 import torch
 import torch.nn as nn
@@ -817,8 +818,8 @@ class LanguageModelBlock(nn.Module):
         x: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        attention_mask: torch.Tensor = None,
-        block_kv_cache: dict = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        block_kv_cache: Optional[dict] = None,
     ):
         """
         Forward pass of the Transformer block.
@@ -883,8 +884,8 @@ class LanguageModel(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        attention_mask: torch.Tensor = None,
-        kv_cache: list[dict] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        kv_cache: Optional[list[dict]] = None,
         start_pos: int = 0,
     ):
         """
@@ -1196,6 +1197,55 @@ class LanguageModel(nn.Module):
         return model
 
 
+class ModalityProjector(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.input_dim = cfg.vit_hidden_dim * (cfg.mp_pixel_shuffle_factor**2)
+        self.output_dim = cfg.lm_hidden_dim
+        self.scale_factor = cfg.mp_pixel_shuffle_factor
+
+        self.proj = nn.Linear(self.input_dim, self.output_dim, bias=False)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(self.proj.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+
+    # https://github.com/huggingface/smollm/blob/main/vision/m4/models/vllama3/modeling_vllama3.py#L1281
+    def pixel_shuffle(self, x):
+        bsz, seq, embed_dim = x.size()
+        seq_root = int(seq**0.5)
+        assert (
+            seq_root**2 == seq
+        )  # Sequence length must be a perfect square for pixel shuffle
+        assert (
+            seq_root % self.scale_factor == 0
+        )  # Sequence root must be divisible by scale factor
+
+        height = width = seq_root
+        x = x.view(bsz, height, width, embed_dim)
+        h_out = height // self.scale_factor
+        w_out = width // self.scale_factor
+
+        x = x.reshape(
+            bsz, h_out, self.scale_factor, w_out, self.scale_factor, embed_dim
+        )
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        x = x.reshape(bsz, h_out * w_out, embed_dim * self.scale_factor**2)
+
+        return x
+
+    def forward(self, x):
+        x = self.pixel_shuffle(x)
+        x = self.proj(x)
+
+        return x
+
+
 def create_pixel_attention_mask_vectorized(
     image_sizes: list[tuple[int, int]], device=None
 ) -> torch.Tensor:
@@ -1241,6 +1291,8 @@ class VisionLanguageModel(nn.Module):
             self.decoder = LanguageModel(cfg)
         self.MP = ModalityProjector(cfg)
         self.load_backbone = load_backbone
+
+        # TODO: what to do with the tokenizer
         self.tokenizer = get_tokenizer(
             cfg.lm_tokenizer, cfg.vlm_extra_tokens, cfg.lm_chat_template
         )
@@ -1521,13 +1573,12 @@ class VisionLanguageModel(nn.Module):
         # Save weights as safetensors
         save_model(self, os.path.join(save_directory, "model.safetensors"))
 
+    """
     def push_to_hub(self, repo_id: str, private: bool = False) -> None:
-        """
         Push the model and configuration to the Hugging Face Hub.
 
         Args:
             repo_id (str): The repo ID on the Hugging Face Hub.
-        """
         from huggingface_hub import create_repo, upload_folder
 
         # Create repo
@@ -1550,3 +1601,4 @@ class VisionLanguageModel(nn.Module):
                 folder_path=save_path,
                 commit_message="Upload nanoVLM using push_to_hub",
             )
+    """

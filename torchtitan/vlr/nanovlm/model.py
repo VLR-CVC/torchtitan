@@ -10,7 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import load_model, save_model
 
-from utils import top_k_top_p_filtering
+from .utils import top_k_top_p_filtering
+from .config import VLMConfig
 
 
 # https://github.com/huggingface/transformers/blob/main/src/transformers/models/idefics3/modeling_idefics3.py#L107

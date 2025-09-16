@@ -14,7 +14,7 @@ import torch.nn.functional as F
 
 from torch.nn.utils.rnn import pad_sequence
 
-from torchtitan.vlr.nanovlm.dataset import IGNORE_INDEX
+IGNORE_INDEX = -100
 
 def padded_collate(
     batch: List[Dict[str, List[int]]],

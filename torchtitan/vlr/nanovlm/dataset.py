@@ -5,7 +5,6 @@ from torch.utils.data import IterableDataset, Dataset
 from torchtitan.components.dataloader import ParallelAwareDataloader
 from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.datasets.hf_datasets import DATASETS, _validate_dataset
-from torchtitan.experiments.multimodal.transform import CLIPTransform
 from torchtitan.tools.logging import logger
 from torchtitan.config import JobConfig
 
@@ -14,7 +13,8 @@ from tokenizers import Tokenizer
 
 from typing import Any
 
-from collator import MultiModalCollator
+from .transform import CLIPTransform
+from .collator import MultiModalCollator
 
 CHAT_TEMPLATE = "{%- for message in messages %}{{'<image><|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
 

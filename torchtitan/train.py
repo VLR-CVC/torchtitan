@@ -4,6 +4,9 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import pdb
+
+
 import importlib
 import os
 import time
@@ -32,7 +35,6 @@ from torchtitan.tools.profiling import (
     maybe_enable_memory_snapshot,
     maybe_enable_profiling,
 )
-
 
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     # core configs
@@ -654,6 +656,8 @@ if __name__ == "__main__":
     config_manager = ConfigManager()
     config = config_manager.parse_args()
     trainer: Optional[Trainer] = None
+
+    pdb.set_trace()
 
     try:
         trainer = Trainer(config)

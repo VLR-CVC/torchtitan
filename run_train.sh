@@ -15,7 +15,6 @@ export LOG_RANK=${LOG_RANK:-0}
 CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/vlr/nanovlm/debug_config.toml"}
 TRAIN_FILE=${TRAIN_FILE:-"torchtitan.train"}
 
-CUDA_VISIBLE_DEVICES=4 \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
 -m ${TRAIN_FILE} --job.config_file ${CONFIG_FILE} "$@"

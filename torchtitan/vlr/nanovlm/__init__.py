@@ -18,15 +18,16 @@ from torchtitan.protocols.train_spec import (
     register_train_spec,
 )
 
-from .vision_language_model import VisionLanguageModel
-from .args import VLMConfig
+from .model import VisionLanguageModel
+from .config import VLMConfig
+from .dataset import build_mm_dataloader
 
 nanovlm_configs = {
     "debugmodel": VLMConfig(
-        hidden_dim=256,
-        num_layers=4,
-        num_heads=2,
-        vocab_size=10000,
+        lm_hidden_dim=256,
+        #num_layers=4,
+        #num_heads=2,
+        #vocab_size=10000,
     ),
 }
 

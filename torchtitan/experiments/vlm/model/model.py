@@ -11,7 +11,7 @@ from torch import nn
 from torchtitan.models.attention import init_attention_mask
 from torchtitan.models.llama3 import Transformer as Llama3
 
-from .args import Llama3Siglip2ModelArgs
+from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
 
@@ -45,8 +45,8 @@ class Llama3Siglip2Transformer(Llama3):
         self.model_args = model_args
         self.encoder = VisionTransformer(model_args.encoder)
         self.projector = Projector(
-            in_dim=model_args.encoder.dim, out_dim=model_args.dim
-        )
+                in_dim=model_args.encoder.dim, out_dim=model_args.dim
+                )
         self.n_pixels_per_token = model_args.encoder.patch_size**2
         self.init_encoder_weights()
 
@@ -66,24 +66,24 @@ class Llama3Siglip2Transformer(Llama3):
         i_flatten = torch.masked_select(i_NLD, mask=i_mask_NL.unsqueeze(-1))
 
         assert i_flatten.numel() // D == img_mask_h_BSD.sum(), (
-            f"Different number of visual embeddings {i_flatten.numel() // D} "
-            f"with placeholder in input token embeddings {img_mask_h_BSD.sum()}"
-        )
+                f"Different number of visual embeddings {i_flatten.numel() // D} "
+                f"with placeholder in input token embeddings {img_mask_h_BSD.sum()}"
+                )
         h_BSD.masked_scatter_(mask=img_mask_h_BSD, source=i_flatten)
         return h_BSD
 
     def forward(
-        self,
-        tokens: torch.Tensor,
-        eos_id: int | None = None,
-        input_batch: torch.Tensor | None = None,
-        pixel_values: torch.Tensor | None = None,
-        grid_thw: torch.Tensor | None = None,
-    ):
+            self,
+            tokens: torch.Tensor,
+            eos_id: int | None = None,
+            input_batch: torch.Tensor | None = None,
+            pixel_values: torch.Tensor | None = None,
+            grid_thw: torch.Tensor | None = None,
+            ):
         if self.model_args.use_flex_attn:
             init_attention_mask(
-                input_batch if input_batch is not None else tokens, eos_id=self.eos_id
-            )
+                    input_batch if input_batch is not None else tokens, eos_id=self.eos_id
+                    )
 
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         h_BSD = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
@@ -101,3 +101,33 @@ class Llama3Siglip2Transformer(Llama3):
         h_BSD = self.norm(h_BSD) if self.norm else h_BSD
         output = self.output(h_BSD) if self.output else h_BSD
         return output
+
+if __name__ == "__main__":
+
+    siglip2_configs = {
+            "debugmodel": Siglip2ModelArgs(
+                dim=128,
+                ffn_dim=256,
+                n_layers=4,
+                n_heads=2,
+                )
+            }
+    configs = {
+            "256M": Llama3Siglip2ModelArgs(
+                encoder=siglip2_configs["debugmodel"],
+                dim=576,
+                n_layers=30,
+                n_heads=9,
+                n_kv_heads=3,
+                ffn_dim_multiplier=1.3,
+                multiple_of=1024,
+                rope_theta=500000,
+                ),
+            }
+
+
+    args = configs["256M"]
+    model = Llama3Siglip2Transformer(args)
+
+    print(model)
+

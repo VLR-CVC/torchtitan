@@ -50,6 +50,16 @@ llama3_siglip2_configs = {
         use_flex_attn=True,
         attn_mask_type="block_causal",
     ),
+    "256M": Llama3Siglip2ModelArgs(
+        encoder=siglip2_configs["debugmodel"],
+        dim=576,
+        n_layers=30,
+        n_heads=9,
+        n_kv_heads=3,
+        ffn_dim_multiplier=1.3,
+        multiple_of=1024,
+        rope_theta=500000,
+    ),
     "8B": Llama3Siglip2ModelArgs(
         encoder=siglip2_configs["debugmodel"],
         dim=4096,

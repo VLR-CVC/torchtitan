@@ -97,3 +97,33 @@ class Llama3Siglip2Transformer(Llama3):
         h_BSD = self.norm(h_BSD) if self.norm else h_BSD
         output = self.output(h_BSD) if self.output else h_BSD
         return output
+
+if __name__ == "__main__":
+
+    siglip2_configs = {
+            "debugmodel": Siglip2ModelArgs(
+                dim=128,
+                ffn_dim=256,
+                n_layers=4,
+                n_heads=2,
+                )
+            }
+    configs = {
+            "256M": Llama3Siglip2ModelArgs(
+                encoder=siglip2_configs["debugmodel"],
+                dim=576,
+                n_layers=30,
+                n_heads=9,
+                n_kv_heads=3,
+                ffn_dim_multiplier=1.3,
+                multiple_of=1024,
+                rope_theta=500000,
+                ),
+            }
+
+
+    args = configs["256M"]
+    model = Llama3Siglip2Transformer(args)
+
+    print(model)
+

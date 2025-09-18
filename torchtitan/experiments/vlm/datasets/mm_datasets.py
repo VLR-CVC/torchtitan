@@ -147,14 +147,32 @@ def _process_obelics_sample(
 ) -> dict[str, Any] | None:
     """Process a sample from the OBELICS dataset."""
     return _process_mm_sample(
-        texts=sample.get("texts", []),
-        images=sample.get("images", []),
-        tokenizer=tokenizer,
-        patch_size=patch_size,
-        spatial_merge_size=spatial_merge_size,
-        max_patch_per_image=max_patch_per_image,
-        special_tokens=special_tokens,
-    )
+            texts=sample.get("texts", []),
+            images=sample.get("images", []),
+            tokenizer=tokenizer,
+            patch_size=patch_size,
+            spatial_merge_size=spatial_merge_size,
+            max_patch_per_image=max_patch_per_image,
+            special_tokens=special_tokens,
+            )
+
+def _process_finevision_sample(
+        sample: dict[str, Any],
+        tokenizer: HuggingFaceTokenizer,
+        path_size: int,
+        spatial_merge_size: int,
+        max_patch_per_image: int,
+        special_tokens,
+        ) -> dict[str, Any] | None:
+    return _process_mm_sample(
+            texts = sample.get("texts", []),
+            images = sample.get("images", []),
+            tokenizer=tokenizer,
+            patch_size=patch_size,
+            spatial_merge_size=spatial_merge_size,
+            max_patch_per_image=max_patch_per_image,
+            special_tokens=special_tokens,
+            )
 
 
 def _process_cc12_wd_sample(
@@ -198,6 +216,11 @@ MM_DATASETS = {
         path="pixparse/cc12m-wds",
         loader=lambda path: load_dataset(path, split="train", streaming=True),
         sample_processor=_process_cc12_wd_sample,
+    ),
+    "finevision": MMDatasetConfig(
+        path="HuggingFaceM4/FineVision",
+        loader=lambda path: load_dataset(path, split="train", streaming=True),
+        sample_processor=_process_finevision_sample,
     ),
 }
 

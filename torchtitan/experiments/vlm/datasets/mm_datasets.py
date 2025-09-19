@@ -159,14 +159,14 @@ def _process_obelics_sample(
 def _process_finevision_sample(
         sample: dict[str, Any],
         tokenizer: HuggingFaceTokenizer,
-        path_size: int,
+        patch_size: int,
         spatial_merge_size: int,
         max_patch_per_image: int,
         special_tokens,
         ) -> dict[str, Any] | None:
     return _process_mm_sample(
-            texts = sample.get("texts", []),
-            images = sample.get("images", []),
+            texts = ['None'] + sample.get("texts", []),
+            images = sample.get("images", []) + ['None'],
             tokenizer=tokenizer,
             patch_size=patch_size,
             spatial_merge_size=spatial_merge_size,

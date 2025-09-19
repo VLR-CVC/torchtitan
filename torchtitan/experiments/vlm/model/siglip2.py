@@ -64,6 +64,9 @@ def resize_positional_embeddings(
 
 
 class VisionEmbeddings(nn.Module):
+    """
+    DEPRECATED
+    """
     def __init__(self, args: Siglip2ModelArgs):
         super().__init__()
         self.patch_embedding = nn.Linear(
@@ -95,6 +98,64 @@ class VisionEmbeddings(nn.Module):
         )
         # Add positional embeddings to patch embeddings
         embeddings = patch_embeds_NLD + resized_positional_embeddings
+        return embeddings
+
+class SmolVLMVisionEmbeddings(nn.Module):
+    """
+    Vision embeddings with positional embeddings built-in.
+
+    Taken from SmolVLM transformers implementation.
+    """
+    def __init__(self):
+        self.embed_dim = 1152
+        self.image_size = 224
+        self.patch_size = 16
+        self.num_channels = 3
+
+        self.patch_embedding = nn.Conv2d(
+            in_channels=self.num_channels,
+            out_channels=self.embed_dim,
+            kernel_size=self.patch_size,
+            stride=self.patch_size,
+            padding="valid",
+        )
+
+        self.num_patches_per_side = self.image_size // self.patch_size
+        self.num_patches = self.num_patches_per_side**2
+        self.num_positions = self.num_patches
+        self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+
+    def forward(self, pixel_values: torch.FloatTensor, patch_attention_mask: torch.BoolTensor) -> torch.Tensor:
+        batch_size, _, max_im_h, max_im_w = pixel_values.shape
+
+        patch_embeds = self.patch_embedding(pixel_values)
+        embeddings = patch_embeds.flatten(2).transpose(1, 2)
+
+        max_nb_patches_h, max_nb_patches_w = max_im_h // self.patch_size, max_im_w // self.patch_size
+        boundaries = torch.arange(
+            1 / self.num_patches_per_side, 1.0, 1 / self.num_patches_per_side, device=pixel_values.device
+        )
+        position_ids = torch.full(
+            size=(batch_size, max_nb_patches_h * max_nb_patches_w), fill_value=0, device=pixel_values.device
+        )
+
+        for batch_idx, p_attn_mask in enumerate(patch_attention_mask):
+            nb_patches_h = p_attn_mask[:, 0].sum()
+            nb_patches_w = p_attn_mask[0].sum()
+
+            h_indices = torch.arange(nb_patches_h, device=position_ids.device, dtype=pixel_values.dtype)
+            w_indices = torch.arange(nb_patches_w, device=position_ids.device, dtype=pixel_values.dtype)
+
+            fractional_coords_h = h_indices / nb_patches_h * (1 - 1e-6)
+            fractional_coords_w = w_indices / nb_patches_w * (1 - 1e-6)
+
+            bucket_coords_h = torch.bucketize(fractional_coords_h, boundaries, right=True)
+            bucket_coords_w = torch.bucketize(fractional_coords_w, boundaries, right=True)
+
+            pos_ids = (bucket_coords_h[:, None] * self.num_patches_per_side + bucket_coords_w).flatten()
+            position_ids[batch_idx][p_attn_mask.view(-1)] = pos_ids
+
+        embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings
 
 

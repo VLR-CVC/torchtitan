@@ -96,35 +96,32 @@ class MultiModalCollatorNLD:
 
         Args:
             all_images: list of image tensors, each of shape (T, H, W, 3)
-
-        Returns:
-            patches: Tensor of shape (N, L, D) or None if no images
-            grids: Tensor of shape (N, L, 3) or None if no images
         """
         if not all_images:
             return None, None
 
-        patch_list, grid_list = [], []
+        pixel_values_list, grid_list = [], []
         for img in all_images:
             # Convert single image to patches
-            patches, grids = convert_to_patches(img, patch_size=self.patch_size)
+            #patches, grids = convert_to_patches(img, patch_size=self.patch_size)
+            pixel_values, grids = get_grids(img, patch_size=self.patch_size)
 
-            # Pad/truncate to max patches
-            patches, grids = pad_patches(patches, grids, self.max_patches_per_image)
+            # Pad/truncate to max patches DEPRECATED
+            #patches, grids = pad_patches(patches, grids, self.max_patches_per_image)
 
-            patch_list.append(patches)
+            pixel_values_list.append(pixel_values)
             grid_list.append(grids)
 
         # Stack all images
-        patches = torch.stack(patch_list)
+        pixel_values = torch.stack(pixel_values_list)
         grids = torch.stack(grid_list)
+        # TODO: need for stack?
 
         # Pad to max_images_per_batch with empty images
-        patches, grids = pad_empty_images_to_target_batch_size(
-            patches, grids, self.max_images_per_batch
-        )
+        # DEPRECATED
+        #patches, grids = pad_empty_images_to_target_batch_size(patches, grids, self.max_images_per_batch)
 
-        return patches, grids
+        return pixel_values, grids
 
     def collate_text(
         self,

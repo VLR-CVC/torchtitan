@@ -249,6 +249,23 @@ def convert_to_patches(
     return patches, grid
 
 
+def get_grids(
+    pixel_values: torch.Tensor,
+    patch_size: int,
+    temporal_patch_size: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
+    T, H, W, C = pixel_values.shape
+    device = pixel_values.device
+
+    coords = torch.meshgrid(
+        torch.arange(T // temporal_patch_size, device=device),
+        torch.arange(H // patch_size, device=device),
+        torch.arange(W // patch_size, device=device),
+        indexing="ij",
+    )
+    grid = E.rearrange(torch.stack(coords), "coords t h w -> (t h w) coords")
+    return pixel_values, grid
+
+
 def pad_patches(
     patches: torch.Tensor,
     grids: torch.Tensor,

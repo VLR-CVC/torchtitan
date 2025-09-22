@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
 
 from tokenizers import AddedToken, Tokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizer
 from torchtitan.config import JobConfig
 from torchtitan.tools.logging import logger
 from typing_extensions import override
@@ -60,6 +61,9 @@ class HuggingFaceTokenizer(BaseTokenizer):
         self.bos_token = None
         self.eos_token = None
 
+        self.default_add_bos = False
+        self.detault_add_eos = False
+
         # Load the underlying tokenizer
         self.tokenizer = self._load_tokenizer_from_path(tokenizer_path)
 
@@ -69,8 +73,8 @@ class HuggingFaceTokenizer(BaseTokenizer):
         )
 
         # Infer special tokens and adding BOS/EOS behavior
-        self._infer_special_tokens()
-        self._infer_should_add_bos_eos()
+        #self._infer_special_tokens()
+        #self._infer_should_add_bos_eos()
 
     def _load_config(self, config_path: str) -> Optional[dict]:
         """Load configuration from JSON file if it exists."""
@@ -102,7 +106,7 @@ class HuggingFaceTokenizer(BaseTokenizer):
         # Strategy 1: Load from tokenizer.json (preferred for modern tokenizers)
         if os.path.exists(tokenizer_json_path):
             logger.info("Loading tokenizer from tokenizer.json")
-            return Tokenizer.from_file(tokenizer_json_path)
+            return AutoTokenizer.from_pretrained(tokenizer_path)
         # Strategy 2: Load from vocab files (with or without merges.txt)
         elif os.path.exists(vocab_json_path) or os.path.exists(vocab_txt_path):
             # Load vocabulary
@@ -347,12 +351,13 @@ class HuggingFaceTokenizer(BaseTokenizer):
         else:
             text = kwargs.get("text", "")
 
-        add_bos = kwargs.get("add_bos", self.default_add_bos)
-        add_eos = kwargs.get("add_eos", self.default_add_eos)
+        #add_bos = kwargs.get("add_bos", self.default_add_bos)
+        #add_eos = kwargs.get("add_eos", self.default_add_eos)
 
         # Get base token IDs from the underlying tokenizer
-        token_ids = self.tokenizer.encode(text).ids
+        token_ids = self.tokenizer.encode(text)#.ids
 
+        """
         # Add BOS token if requested and not already added by tokenizer
         if not self.hf_adds_bos and add_bos:
             if self.bos_id is not None:
@@ -362,6 +367,7 @@ class HuggingFaceTokenizer(BaseTokenizer):
         if not self.hf_adds_eos and add_eos:
             if self.eos_id is not None:
                 token_ids.append(self.eos_id)
+        """
 
         return token_ids
 
@@ -408,6 +414,14 @@ class HuggingFaceTokenizer(BaseTokenizer):
     def id_to_token(self, token_id: int) -> Optional[str]:
         """Convert ID to token."""
         return self.tokenizer.id_to_token(token_id)
+
+    @property
+    def chat_template(self):
+        return self.tokenizer.chat_template
+
+    def apply_chat_template(self, conversation, **kwargs):
+        return self.tokenizer.apply_chat_template(conversation, **kwargs)
+
 
 
 def build_hf_tokenizer(

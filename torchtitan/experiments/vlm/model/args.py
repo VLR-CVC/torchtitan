@@ -42,7 +42,7 @@ class SpecialTokens:
 
 @dataclass
 class Siglip2ModelArgs:
-    dim: int = 768
+    dim: int = 1152
     ffn_dim: int = 3072
     n_layers: int = 12
     n_heads: int = 12

@@ -24,6 +24,7 @@ from torchtitan.components.tokenizer import BaseTokenizer, HuggingFaceTokenizer
 from torchtitan.config import JobConfig
 from torchtitan.datasets import DatasetConfig
 from torchtitan.tools.logging import logger
+from torchtitan.datasets.utils import load_image_PIL
 
 from ..model.args import SpecialTokens
 from .mm_collator_nld import MultiModalCollatorNLD
@@ -158,22 +159,10 @@ def _process_obelics_sample(
 
 def _process_finevision_sample(
         sample: dict[str, Any],
-        tokenizer: HuggingFaceTokenizer,
-        patch_size: int,
-        spatial_merge_size: int,
-        max_patch_per_image: int,
-        special_tokens,
         ) -> dict[str, Any] | None:
-    return _process_mm_sample(
-            texts = ['None'] + sample.get("texts", []),
-            images = sample.get("images", []) + ['None'],
-            tokenizer=tokenizer,
-            patch_size=patch_size,
-            spatial_merge_size=spatial_merge_size,
-            max_patch_per_image=max_patch_per_image,
-            special_tokens=special_tokens,
-            )
 
+    sample_texts = sample.get('texts')
+    sample_images = sample.get('images')
 
 def _process_cc12_wd_sample(
     sample: dict[str, Any],
@@ -191,19 +180,10 @@ def _process_cc12_wd_sample(
     text = sample.get("txt", "")
     image = sample.get("jpg", None)
 
-    # Transform to OBELICS format
-    texts = [None, text]
-    images = [image, None]
-
-    return _process_mm_sample(
-        texts=texts,
-        images=images,
-        tokenizer=tokenizer,
-        patch_size=patch_size,
-        spatial_merge_size=spatial_merge_size,
-        max_patch_per_image=max_patch_per_image,
-        special_tokens=special_tokens,
-    )
+    return {
+        "images": images,
+        "texts": sample_texts,
+    }
 
 
 MM_DATASETS = {
@@ -219,7 +199,7 @@ MM_DATASETS = {
     ),
     "finevision": MMDatasetConfig(
         path="HuggingFaceM4/FineVision",
-        loader=lambda path: load_dataset(path, split="train", streaming=True),
+        loader=lambda path: load_dataset(path, split="train", name='docvqa', streaming=True),
         sample_processor=_process_finevision_sample,
     ),
 }
@@ -241,6 +221,34 @@ def _validate_mm_dataset(
     return path, config.loader, config.sample_processor
 
 
+def find_tensor_match_all(
+    subsequence_tensor: torch.Tensor, main_tensor: torch.Tensor
+) -> torch.Tensor:
+    """
+    Finds all occurrences of a subsequence tensor within a main tensor. Used for the creation of a mask.
+    """
+    sub_len = len(subsequence_tensor)
+    main_len = len(main_tensor)
+
+    assert sub_len < main_len
+
+    if sub_len > main_len:
+        return torch.zeros(main_len, dtype=torch.bool)
+
+    all_possible_slices = main_tensor.unfold(0, sub_len, 1)
+
+    comparison_result = torch.eq(all_possible_slices, subsequence_tensor)
+    is_match_start = torch.all(comparison_result, dim=1)
+
+    output_tensor = torch.zeros(main_len, dtype=torch.bool)
+    start_indices = torch.nonzero(is_match_start, as_tuple=True)[0]
+
+    for start_index in start_indices:
+        output_tensor[start_index : start_index + sub_len] = True
+
+    return output_tensor
+
+
 class MultiModalDataset(IterableDataset, Stateful):
     """MultiModal Dataset with support for sample packing."""
 
@@ -253,8 +261,8 @@ class MultiModalDataset(IterableDataset, Stateful):
         seq_len: int,
         patch_size: int,
         spatial_merge_size: int,
-        max_patches_per_image: int,
-        max_images_per_batch: int,
+        #max_patches_per_image: int,
+        #max_images_per_batch: int,
         packing_buffer_size: int,
         special_tokens: SpecialTokens,
         dp_rank: int = 0,
@@ -275,8 +283,8 @@ class MultiModalDataset(IterableDataset, Stateful):
         self.seq_len = seq_len
         self.patch_size = patch_size
         self.spatial_merge_size = spatial_merge_size
-        self.max_patches_per_image = max_patches_per_image
-        self.max_images_per_batch = max_images_per_batch
+        #self.max_patches_per_image = max_patches_per_image
+        #self.max_images_per_batch = max_images_per_batch
         self.special_tokens = special_tokens
         self.enable_packing = packing_buffer_size > 0
         if self.enable_packing:
@@ -288,42 +296,52 @@ class MultiModalDataset(IterableDataset, Stateful):
         self.infinite = infinite
         self._sample_idx = 0
 
+        self.chat_template = open("torchtitan/experiments/vlm/datasets/template.jinja").read()
+
+        self._tokenizer.image_id = 49190
+
+        # MAGIC NUMBERS
+        tile_size = 224
+        max_num_tiles = 1
+        self.transform_image = CLIPTransform(
+            image_mean=(0.48145466, 0.4578275, 0.40821073),
+            image_std=(0.26862954, 0.26130258, 0.27577711),
+            tile_size=tile_size,
+            possible_resolutions=None,
+            max_num_tiles=max_num_tiles,
+            resample="bilinear",
+            resize_to_max_canvas=False,
+        )
+
+
     def __iter__(self):
         while True:
             for sample in self._get_data_iter():
-                try:
-                    self._sample_idx += 1
+                self._sample_idx += 1
+                # all happens inside here
+                processed = self.process_sample(sample)
 
-                    processed = self.sample_processor(
-                        sample=sample,
-                        tokenizer=self._tokenizer,
-                        patch_size=self.patch_size,
-                        spatial_merge_size=self.spatial_merge_size,
-                        max_patch_per_image=self.max_patches_per_image,
-                        special_tokens=self.special_tokens,
+                if processed["input_ids"].shape[0] > self.seq_len:
+                    logger.warning(
+                        f"Sample length {processed['input_ids'].shape[0]} > training {self.seq_len=}. Skip"
                     )
-                    if processed is None:
-                        continue
+                    continue
 
-                    if processed["input_ids"].shape[0] > self.seq_len:
-                        logger.warning(
-                            f"Sample length {processed['input_ids'].shape[0]} > training {self.seq_len=}. Skip"
-                        )
-                        continue
+                if self.enable_packing:
+                    self.packer.add_sample(processed)
 
-                    if self.enable_packing:
-                        self.packer.add_sample(processed)
+                    if self.packer.has_batch_ready():
+                        batch = self.packer.get_next_batch()
+                        if batch:
+                            yield from batch
+                else:
+                    yield processed  # individual sample
 
-                        if self.packer.has_batch_ready():
-                            batch = self.packer.get_next_batch()
-                            if batch:
-                                yield from batch
-                    else:
-                        yield processed  # individual sample
-
+                """
                 except Exception as e:
                     logger.warning(f"Error in iteration: {e}")
                     continue
+                """
 
             if self.enable_packing:
                 # Handle remaining samples in packer
@@ -338,6 +356,31 @@ class MultiModalDataset(IterableDataset, Stateful):
                 break
             else:
                 self._sample_idx = 0
+
+    def process_sample(
+        self, sample
+    ) -> dict[str, Any]:
+        sample = self.sample_processor(sample)
+        processed_images = [self.transform_image(img) for img in sample["images"]]
+
+        images = [img['image'] for img in processed_images]
+        aspect_ratios = [img['aspect_ratio'] for img in processed_images]
+
+        messages = sample['texts']
+
+        conv_ids, mask, attention_mask = self.apply_template_and_create_mask(
+            messages
+        )
+
+        labels = self._get_labels(conv_ids, mask)
+
+        return {
+            "images": images,
+            "aspect_ratios": aspect_ratios,
+            "input_ids": conv_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
 
     def _get_data_iter(self):
         try:
@@ -357,6 +400,14 @@ class MultiModalDataset(IterableDataset, Stateful):
         except Exception as e:
             logger.error(f"Error in _get_data_iter: {e}")
             return iter([])
+
+
+    def _get_labels(self, input_ids, mask):
+        labels = input_ids.clone().masked_fill(~mask, IGNORE_INDEX)
+        labels = labels.roll(-1, dims=0)
+        labels[-1] = IGNORE_INDEX  # last token has no target
+        return labels
+
 
     def load_state_dict(self, state_dict):
         self._sample_idx = state_dict["sample_idx"]
@@ -384,6 +435,54 @@ class MultiModalDataset(IterableDataset, Stateful):
             }
 
         return state
+
+    def apply_template_and_create_mask(self, messages):
+        """
+        Adding BOS and EOS tokens and applies the conversation turns.
+        """
+        conv_ids = self._tokenizer.apply_chat_template(
+            messages,
+            tools=None,
+            tokenize=True,
+            chat_template=self.chat_template,
+            add_special_tokens=True,
+            return_dict=True,
+        )
+
+        masks = []
+        for msg in messages:
+            all_ids = torch.tensor(
+                self._tokenizer.apply_chat_template(
+                    [msg],
+                    tools=None,
+                    tokenize=True,
+                    add_generation_prompt=False,
+                    chat_template=self.chat_template,
+                ),
+                dtype=torch.uint64,
+            )
+
+            ass_ids = torch.tensor(
+                self._tokenizer.encode(msg["assistant"]),
+                dtype=torch.uint64,
+            )
+
+            tmp_mask = find_tensor_match_all(ass_ids, all_ids)
+
+            assert all_ids.shape == tmp_mask.shape
+
+            masks.append(tmp_mask)
+
+        labels = torch.cat(masks)
+        # the mask that is passed is for the whole image, not just one Q/A pair
+        assert len(conv_ids["input_ids"]) == labels.shape[0]
+
+        return (
+            torch.tensor(conv_ids["input_ids"]),
+            labels,
+            torch.tensor(conv_ids["attention_mask"]),
+        )
+
 
 
 def build_mm_dataloader(
@@ -426,8 +525,6 @@ def build_mm_dataloader(
         seq_len=seq_len,
         patch_size=patch_size,
         spatial_merge_size=spatial_merge_size,
-        max_patches_per_image=max_patches_per_image,
-        max_images_per_batch=max_images_per_batch,
         packing_buffer_size=packing_buffer_size,
         special_tokens=special_tokens,
         dp_rank=dp_rank,

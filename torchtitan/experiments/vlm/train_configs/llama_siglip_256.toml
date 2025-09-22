@@ -41,15 +41,15 @@ decay_type = "linear"
 min_lr_factor = 0.0
 
 [training]
-local_batch_size = 6
-seq_len = 8192
+local_batch_size = 1
+seq_len = 2048
 max_patches_per_image = 1024
 max_images_per_batch = 16
 # packing_buffer_size = 100
 max_norm = 1.0  # grad norm clipping
 steps = 2000
-#dataset = "finevision"
-dataset = "cc12m"
+dataset = "finevision"
+#dataset = "cc12m"
 
 [data]
 max_patches_per_image = 1024
@@ -57,7 +57,7 @@ max_images_per_batch = 64
 # packing_buffer_size = 100
 
 [compile]
-enable = true
+enable = false
 
 [parallelism]
 data_parallel_replicate_degree = 1
@@ -69,7 +69,7 @@ pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
-enable = true
+enable = false
 folder = "checkpoint"
 interval = 100
 last_save_model_only = true

@@ -9,14 +9,52 @@ from typing import Any
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 
 from torchtitan.tools.logging import logger
 
-from .image_utils import (
-    get_grids
-)
 from .text_utils import pad_input_ids_and_labels_to_target_batch_size, pad_text_batch
 
+
+def create_pixel_attention_mask_vectorized(
+    image_sizes: list[tuple[int, int]], device=None
+) -> torch.Tensor:
+    if not image_sizes:
+        return torch.empty(0, 0, 0, dtype=torch.bool, device=device)
+
+    batch_size = len(image_sizes)
+    max_h = max(h for h, w in image_sizes)
+    max_w = max(w for h, w in image_sizes)
+
+    heights = torch.tensor([h for h, _ in image_sizes], device=device).view(batch_size, 1, 1)
+    widths = torch.tensor([w for _, w in image_sizes], device=device).view(batch_size, 1, 1)
+
+    h_range = torch.arange(max_h, device=device).view(1, max_h, 1)
+    w_range = torch.arange(max_w, device=device).view(1, 1, max_w)
+
+    h_mask = h_range < heights
+    w_mask = w_range < widths
+
+    return h_mask & w_mask
+
+# WHAT IS THIS
+def _pixel_to_patch_mask(
+    pixel_mask: torch.Tensor, patch_size: int
+) -> torch.Tensor:
+    """Converts a pixel attention mask to a patch attention mask."""
+    # Add a channel dimension for pooling
+    pixel_mask_float = pixel_mask.unsqueeze(1).float()
+    
+    # Use average pooling to check if a patch contains any unmasked pixels
+    # A patch is considered valid if its average value is > 0
+    patch_mask = F.avg_pool2d(
+        pixel_mask_float,
+        kernel_size=patch_size,
+        stride=patch_size
+    ) > 0
+    
+    # Remove the channel dimension
+    return patch_mask.squeeze(1)
 
 @dataclass
 class MultiModalCollatorNLD:
@@ -84,14 +122,14 @@ class MultiModalCollatorNLD:
     padding_idx: int = 0
     ignore_idx: int = -100
 
+    """
     def process_images(
         self, all_images: list[torch.Tensor]
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        """Process a list of image tensors into patches with coordinate grids.
+        Process a list of image tensors into patches with coordinate grids.
 
         Args:
             all_images: list of image tensors, each of shape (T, H, W, 3)
-        """
         if not all_images:
             return None, None
 
@@ -117,6 +155,7 @@ class MultiModalCollatorNLD:
         #patches, grids = pad_empty_images_to_target_batch_size(patches, grids, self.max_images_per_batch)
 
         return pixel_values, grids
+    """
 
     def process_text(
         self,
@@ -174,43 +213,34 @@ class MultiModalCollatorNLD:
             batch: list of dictionaries containing:
                 - input_ids: Tensor of shape (S)
                 - labels: Tensor of shape (L)
-                - pixel_values: list of tensors, each (1, H, W, 3)
-
-        Returns:
-            Dictionary containing:
-                - input_ids: Tensor of shape (B, L)
-                - labels: Tensor of shape (B, L)
-                - pixel_values: Tensor of shape (N, L, D)
-                - grid_thw: Tensor of shape (N, L, 3)
+                - images: list of tensors, each (1, 3, H, W)
         """
-        # Count images per sample and total images
-        images_per_sample = []
-        for sample in batch:
-            num_images = len(sample.get("pixel_values", []))
-            images_per_sample.append(num_images)
 
-        # Remove samples from end until total images <= max_images_per_batch
-        total_images = sum(images_per_sample)
-        while total_images > self.max_images_per_batch and batch:
-            removed_images = images_per_sample.pop()
-            total_images -= removed_images
-            batch.pop()
-            logger.warning(
-                f"Removed sample with {removed_images} images to keep "
-                f"total images <= {self.max_images_per_batch}"
-            )
+        images = [sample['images'] for sample in batch]
+        # WHAT IS THIS INDEXING
+        image_shapes = [tuple(img[0].shape[1:]) for img in images]
 
-        # Process all images in batch
-        all_images = [
-            img
-            for sample in batch
-            if "pixel_values" in sample
-            for img in sample["pixel_values"]
-        ]
-        patches, grids = self.process_images(all_images)
+        pixel_attention_mask = create_pixel_attention_mask_vectorized(image_shapes)
+
+        B, max_h, max_w = pixel_attention_mask.shape
+        C = 3 # should be 3
+        
+        # Pad images in a channels-last format
+        padded_pixels = torch.zeros(
+            (B, C, max_h, max_w), dtype=images[0][0].dtype
+        )
+        for i, img in enumerate(images):
+            h, w = image_shapes[i]
+            padded_pixels[i, :, :h, :w] = img[0].squeeze(0)
+
+        # Convert the pixel mask to the final patch mask
+        patch_attention_mask = _pixel_to_patch_mask(
+            pixel_attention_mask, self.patch_size
+        )
 
         # Process text and pad to batch size
         input_ids, labels = self.process_text(batch)
-        input_dict = {"input": input_ids, "pixel_values": patches, "grid_thw": grids}
+        # RETURN PATCH ATTENTION MASK
+        input_dict = {"input": input_ids, "pixel_values": padded_pixels, "patch_attention_mask": patch_attention_mask}
 
         return input_dict, labels

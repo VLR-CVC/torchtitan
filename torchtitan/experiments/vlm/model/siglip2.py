@@ -107,6 +107,7 @@ class SmolVLMVisionEmbeddings(nn.Module):
     Taken from SmolVLM transformers implementation.
     """
     def __init__(self):
+        super().__init__()
         self.embed_dim = 1152
         self.image_size = 224
         self.patch_size = 16
@@ -125,8 +126,12 @@ class SmolVLMVisionEmbeddings(nn.Module):
         self.num_positions = self.num_patches
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
 
+    def init_weights(self):
+        nn.init.trunc_normal_(self.patch_embedding.weight)
+        nn.init.normal_(self.position_embedding.weight)
+
     def forward(self, pixel_values: torch.FloatTensor, patch_attention_mask: torch.BoolTensor) -> torch.Tensor:
-        batch_size, _, max_im_h, max_im_w = pixel_values.shape
+        batch_size, channels, max_im_h, max_im_w = pixel_values.shape
 
         patch_embeds = self.patch_embedding(pixel_values)
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
@@ -253,7 +258,7 @@ class VisionTransformer(nn.Module):
         self.args = args
         self.eos_id = 11
 
-        self.embeddings = VisionEmbeddings(args)
+        self.embeddings = SmolVLMVisionEmbeddings()
         self.layers = nn.ModuleDict(
             {str(idx): TransformerLayer(args) for idx in range(args.n_layers)}
         )
@@ -262,12 +267,11 @@ class VisionTransformer(nn.Module):
     def forward(
         self,
         pixel_values_NLD: torch.FloatTensor,
-        pixel_masks_NL: torch.BoolTensor,
-        grid_hw: torch.LongTensor,
+        patch_attention_mask: torch.BoolTensor,
     ):
-        init_attention_mask(pixel_masks_NL, eos_id=self.eos_id)
+        #init_attention_mask(pixel_masks_NL, eos_id=self.eos_id)
 
-        h = self.embeddings(pixel_values_NLD, grid_hw)
+        h = self.embeddings(pixel_values_NLD, patch_attention_mask)
 
         for layer in self.layers.values():
             h = layer(h)

@@ -10,12 +10,12 @@ set -ex
 # use envs as local overwrites for convenience
 # e.g.
 # LOG_RANK=0,1 NGPU=4 ./run_train.sh
-NGPU=${NGPU:-"4"}
+NGPU=${NGPU:-"1"}
 export LOG_RANK=${LOG_RANK:-0}
 CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/experiments/vlm/train_configs/llama_siglip_256.toml"}
 TRAIN_FILE=${TRAIN_FILE:-"torchtitan.train"}
 
-CUDA_VISIBLE_DEVICES=0,1,3,4 \
+CUDA_VISIBLE_DEVICES=4 \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
 -m ${TRAIN_FILE} --job.config_file ${CONFIG_FILE} "$@"

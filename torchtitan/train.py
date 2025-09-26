@@ -33,6 +33,8 @@ from torchtitan.tools.profiling import (
     maybe_enable_profiling,
 )
 
+torch.backends.cudnn.enabled = False
+
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     # core configs
     job_config: JobConfig

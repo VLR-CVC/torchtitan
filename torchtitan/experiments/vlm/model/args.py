@@ -20,6 +20,9 @@ class Siglip2ModelArgs:
     n_pos_embs: int = 16  # Number of positional embeddings per h&w
     n_channels: int = 3  # RGB channels
     patch_size: int = 16
+    image_size: int = 224
+
+    scale_factor: int = 2
 
     layer_norm_eps: float = 1e-6
     use_flex_attn: bool = True

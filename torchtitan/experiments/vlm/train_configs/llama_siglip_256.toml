@@ -20,11 +20,11 @@ log_freq = 1
 disable_color_printing = false
 enable_tensorboard = false
 save_tb_folder = "tb"
-enable_wandb = true
+enable_wandb = false
 
 [model]
 name = "llama3-siglip2"
-flavor = "256M"
+flavor = "debugmodel"
 # test folder with tokenizer.json, for debug purpose only
 hf_assets_path = "tests/assets/tokenizer"
 # converters = ["float8"]
@@ -42,7 +42,7 @@ min_lr_factor = 0.0
 
 [training]
 local_batch_size = 1
-seq_len = 2048
+seq_len = 256
 max_patches_per_image = 1024
 max_images_per_batch = 16
 # packing_buffer_size = 100
@@ -79,5 +79,5 @@ export_dtype = "float32"
 async_mode = "async"  # ["disabled", "async", "async_with_pinned_mem"]
 
 [activation_checkpoint]
-mode = "selective"  # ["none", "selective", "full"]
+mode = "none"  # ["none", "selective", "full"]
 selective_ac_option = 'op'  # 'int' = ac every positive int layer or 'op', ac based on ops policy

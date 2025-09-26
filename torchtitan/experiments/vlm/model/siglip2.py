@@ -106,12 +106,12 @@ class SmolVLMVisionEmbeddings(nn.Module):
 
     Taken from SmolVLM transformers implementation.
     """
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
-        self.embed_dim = 1152
-        self.image_size = 224
-        self.patch_size = 16
-        self.num_channels = 3
+        self.embed_dim = config.dim
+        self.image_size = config.image_size
+        self.patch_size = config.patch_size
+        self.num_channels = config.n_channels
 
         self.patch_embedding = nn.Conv2d(
             in_channels=self.num_channels,
@@ -192,7 +192,7 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(self.dim, self.dim)
 
         self.attn = build_attention(
-            use_flex_attn=True, attn_mask_type=args.attn_mask_type
+            use_flex_attn=False, attn_mask_type=args.attn_mask_type
         )
 
     def forward(self, x: torch.Tensor):
@@ -258,7 +258,7 @@ class VisionTransformer(nn.Module):
         self.args = args
         self.eos_id = 11
 
-        self.embeddings = SmolVLMVisionEmbeddings()
+        self.embeddings = SmolVLMVisionEmbeddings(args)
         self.layers = nn.ModuleDict(
             {str(idx): TransformerLayer(args) for idx in range(args.n_layers)}
         )

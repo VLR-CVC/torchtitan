@@ -34,25 +34,46 @@ def _scatter_img_tokens(h_BSD, tokens_BS, i_NLD, i_mask_NL, img_id):
 class Projector(nn.Module):
     """Project the Encoder embedding to the LLM embedding."""
 
-    def __init__(self, in_dim: int, out_dim: int) -> None:
+class SmolVLMSimpleMLP(nn.Module):
+    def __init__(self, config):
         super().__init__()
-        self.w1 = nn.Linear(in_dim, in_dim)
-        self.w2 = nn.Linear(in_dim, out_dim)
-        self.init_weights()
-
-    def forward(self, x_NLD: torch.Tensor):
-        x_NLD = self.w1(x_NLD)
-        x_NLD = nn.functional.silu(x_NLD)
-        x_NLD = self.w2(x_NLD)
-        return x_NLD
+        # TODO: scale_factor to config
+        input_size = config.encoder.dim * (config.encoder.scale_factor**2)
+        output_size = config.dim
+        self.proj = nn.Linear(input_size, output_size, bias=False)
 
     def init_weights(self):
-        nn.init.xavier_uniform_(self.w1.weight)
-        if self.w1.bias is not None:
-            nn.init.zeros_(self.w1.bias)
-        nn.init.xavier_uniform_(self.w2.weight)
-        if self.w2.bias is not None:
-            nn.init.zeros_(self.w2.bias)
+        nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=0.02)
+
+    def forward(self, x):
+        return self.proj(x)
+
+
+class Projector(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.scale_factor = config.encoder.scale_factor
+        self.modality_projection = SmolVLMSimpleMLP(config)
+
+    def pixel_shuffle(self, x, scale_factor=2):
+        bsz, seq, embed_dim = x.size()
+        height = width = int(seq**0.5)
+        x = x.view(bsz, height, width, embed_dim)
+        x = x.view(bsz, height, int(width / scale_factor), embed_dim * scale_factor)
+        x = x.permute(0, 2, 1, 3)
+        x = x.reshape(bsz, int(width / scale_factor), int(height / scale_factor), embed_dim * (scale_factor**2))
+        x = x.permute(0, 2, 1, 3)
+        x = x.reshape(bsz, int(seq / (scale_factor**2)), embed_dim * (scale_factor**2))
+        return x
+
+    def forward(self, image_hidden_states):
+        image_hidden_states = self.pixel_shuffle(image_hidden_states, self.scale_factor)
+        image_hidden_states = self.modality_projection(image_hidden_states)
+        return image_hidden_states
+
+    def init_weights(self):
+        self.modality_projection.init_weights()
+
 
 
 class Llama3Siglip2Transformer(Llama3):
@@ -80,7 +101,7 @@ class Llama3Siglip2Transformer(Llama3):
         input_batch: torch.Tensor | None = None,
     ):
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
-        h_BSD = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+        embed_tokens = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         if self.encoder is not None:
             #grid_hw = grid_thw[:, :, 1:]  # Siglip2 only support image hw
@@ -92,10 +113,10 @@ class Llama3Siglip2Transformer(Llama3):
             )
 
         for layer in self.layers.values():
-            h_BSD = layer(h_BSD, self.freqs_cis)
+            hidden_states = layer(hidden_states, self.freqs_cis)
 
-        h_BSD = self.norm(h_BSD) if self.norm else h_BSD
-        output = self.output(h_BSD) if self.output else h_BSD
+        hidden_states = self.norm(hidden_states)
+        output = self.output(hidden_states)
         return output
 
 if __name__ == "__main__":
@@ -125,5 +146,53 @@ if __name__ == "__main__":
     args = configs["256M"]
     model = Llama3Siglip2Transformer(args)
 
-    print(model)
+    patch_size = 16
+
+    # IMAGES
+    img_size = 224
+    pixel_values = torch.randn([1, 1, 3, img_size, img_size])
+    batch_size, num_images, num_channels, height, width = pixel_values.shape
+    # the num_images dim is dropped, increasing the batch size
+    pixel_values = pixel_values.view(batch_size * num_images, *pixel_values.shape[2:])
+
+    # Remove padding images - padding images are full 0.
+    nb_values_per_image = pixel_values.shape[1:].numel()
+    real_images_inds = (pixel_values == 0.0).sum(dim=(-1, -2, -3)) != nb_values_per_image
+
+    if not any(real_images_inds):
+        # no images, leave one empty image.
+        real_images_inds[0] = True
+
+    pixel_values = pixel_values[real_images_inds].contiguous()
+
+    pixel_attention_mask = None
+    if pixel_attention_mask is None:
+            size = [pixel_values.shape[i] for i in (0, 2, 3)]
+            pixel_attention_mask = torch.ones(
+                size=size,
+                dtype=torch.bool,
+                device=pixel_values.device,
+            )
+    else:
+        # Remove padding images from the mask
+        pixel_attention_mask = pixel_attention_mask.view(batch_size * num_images, *pixel_attention_mask.shape[2:])
+        pixel_attention_mask = pixel_attention_mask[real_images_inds].contiguous()
+    patches_subgrid = pixel_attention_mask.unfold(dimension=1, size=patch_size, step=patch_size)
+    patches_subgrid = patches_subgrid.unfold(dimension=2, size=patch_size, step=patch_size)
+    patch_attention_mask = (patches_subgrid.sum(dim=(-1, -2)) > 0).bool()
+
+    image_tokens_seq = (torch.ones(int(14 * 14 / 4)) * torch.tensor(49190))
+
+    seq1 = torch.tensor([    1, 11126,    42, 49189]).reshape(-1)
+    seq2 = torch.tensor([49189,  7306,   346,  5125,   451, 2443,    47, 49279,   198,  9519,  9531,    42, 49279]).reshape(-1)
+    input_ids = torch.cat([seq1, image_tokens_seq, seq2]).long()
+    input_ids = torch.tensor(input_ids).reshape(1, -1)
+
+    outputs = model(
+        tokens = input_ids,
+        patch_attention_mask = patch_attention_mask,
+        pixel_values = pixel_values,
+    )
+
+    print(outputs)
 

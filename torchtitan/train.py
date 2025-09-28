@@ -33,7 +33,6 @@ from torchtitan.tools.profiling import (
     maybe_enable_profiling,
 )
 
-torch.backends.cudnn.enabled = False
 
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     # core configs
@@ -137,6 +136,10 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             self.train_spec.build_tokenizer_fn(job_config)
             if self.train_spec.build_tokenizer_fn is not None
             else None
+        )
+
+        self.tokenizer.add_special_tokens(
+            {"image_token": "<image>"}
         )
 
         self.dataloader = self.train_spec.build_dataloader_fn(
@@ -405,6 +408,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 if isinstance(v, torch.Tensor):
                     input_dict[k] = v.to(device_type)
             labels = labels.to(device_type)
+
+            for key, value in input_dict.items():
+                print(key, value.shape)
 
             yield input_dict, labels
 

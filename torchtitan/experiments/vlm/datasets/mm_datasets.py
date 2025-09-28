@@ -91,7 +91,8 @@ def _process_mm_sample(
                     max_patch_per_image=max_patch_per_image,
                 )
                 if processed_img is not None:
-                    num_tokens, width, height = calculate_image_tokens(
+         
+<<<<<           num_tokens, width, height = calculate_image_tokens(
                         processed_img,
                         patch_size=patch_size,
                         spatial_merge_size=spatial_merge_size,
@@ -550,3 +551,23 @@ def build_mm_dataloader(
     )
 
     return base_dataloader
+
+if __name__ == "__main__":
+
+
+    tokenizer = HuggingFaceTokenizer('/home-local/tockier/torchtitan/assets/hf/SmolVLM2-256M-Video-Instruct/')
+    dataset = MultiModalDataset(
+        dataset_name='finevision',
+        dataset_path='HuggingFaceM4/FineVision',
+        tokenizer=tokenizer,
+        batch_size=1,
+        seq_len=4096,
+        patch_size=16,
+        spatial_merge_size=2,
+        packing_buffer_size=0,
+        special_tokens=None,
+    )
+
+    for sample in dataset:
+        print(sample)
+        exit()

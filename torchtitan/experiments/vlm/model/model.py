@@ -15,6 +15,7 @@ from ..datasets.mm_datasets import SpecialTokens
 from .args import Llama3Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
+torch.set_printoptions(threshold=10_000)
 
 def _scatter_img_tokens(h_BSD, tokens_BS, i_NLD, i_mask_NL, img_id):
     B, S, D = h_BSD.shape
@@ -121,78 +122,98 @@ class Llama3Siglip2Transformer(Llama3):
 
 if __name__ == "__main__":
 
+    from transformers import AutoProcessor
+
     siglip2_configs = {
-            "debugmodel": Siglip2ModelArgs(
-                dim=128,
-                ffn_dim=256,
-                n_layers=4,
-                n_heads=2,
-                )
-            }
-    configs = {
-            "256M": Llama3Siglip2ModelArgs(
-                encoder=siglip2_configs["debugmodel"],
-                dim=576,
-                n_layers=30,
-                n_heads=9,
-                n_kv_heads=3,
-                ffn_dim_multiplier=1.3,
-                multiple_of=1024,
-                rope_theta=500000,
-                ),
-            }
+        "debugmodel": Siglip2ModelArgs(
+            dim=128,
+            ffn_dim=256,
+            n_layers=4,
+            n_heads=2,
+        ),
+        "256M": Siglip2ModelArgs(
+            dim=768,
+            ffn_dim=2304,
+            n_layers=12,
+            n_heads=12,
+        )
+    }
 
+    llama3_siglip2_configs = {
+        "debugmodel": Llama3Siglip2ModelArgs(
+            encoder=siglip2_configs["debugmodel"],
+            dim=256,
+            n_layers=6,
+            n_heads=16,
+            vocab_size=50000,
+            rope_theta=500000,
+        ),
+        "256M": Llama3Siglip2ModelArgs(
+            encoder=siglip2_configs["256M"],
+            dim=576,
+            n_layers=30,
+            n_heads=9,
+            n_kv_heads=3,
+            ffn_dim_multiplier=1.3,
+            multiple_of=1024,
+            rope_theta=100000,
+            vocab_size=49280,
+        ),
+    }
 
-    args = configs["256M"]
-    model = Llama3Siglip2Transformer(args)
+    args = llama3_siglip2_configs["256M"]
 
-    patch_size = 16
+    device = torch.device("cuda:4")
+    model = Llama3Siglip2Transformer(args).to(device)
 
-    # IMAGES
-    img_size = 224
-    pixel_values = torch.randn([1, 1, 3, img_size, img_size])
-    batch_size, num_images, num_channels, height, width = pixel_values.shape
-    # the num_images dim is dropped, increasing the batch size
-    pixel_values = pixel_values.view(batch_size * num_images, *pixel_values.shape[2:])
+    print(model)
 
-    # Remove padding images - padding images are full 0.
-    nb_values_per_image = pixel_values.shape[1:].numel()
-    real_images_inds = (pixel_values == 0.0).sum(dim=(-1, -2, -3)) != nb_values_per_image
+    import numpy as np
+    import requests
+    from PIL import Image
+    from io import BytesIO
 
-    if not any(real_images_inds):
-        # no images, leave one empty image.
-        real_images_inds[0] = True
+    model_id = 'HuggingFaceTB/SmolVLM2-256M-Video-Instruct'
+    processor = AutoProcessor.from_pretrained(model_id)
 
-    pixel_values = pixel_values[real_images_inds].contiguous()
+    image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg"
+    image = Image.open(BytesIO(requests.get(image_url).content)).resize((512, 512))
 
-    pixel_attention_mask = None
-    if pixel_attention_mask is None:
-            size = [pixel_values.shape[i] for i in (0, 2, 3)]
-            pixel_attention_mask = torch.ones(
-                size=size,
-                dtype=torch.bool,
-                device=pixel_values.device,
-            )
-    else:
-        # Remove padding images from the mask
-        pixel_attention_mask = pixel_attention_mask.view(batch_size * num_images, *pixel_attention_mask.shape[2:])
-        pixel_attention_mask = pixel_attention_mask[real_images_inds].contiguous()
-    patches_subgrid = pixel_attention_mask.unfold(dimension=1, size=patch_size, step=patch_size)
-    patches_subgrid = patches_subgrid.unfold(dimension=2, size=patch_size, step=patch_size)
-    patch_attention_mask = (patches_subgrid.sum(dim=(-1, -2)) > 0).bool()
+    image = np.array(image)
 
-    image_tokens_seq = (torch.ones(int(14 * 14 / 4)) * torch.tensor(49190))
+    messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": "Can you describe this image?"},            
+        ]
+    },
+    ]
 
-    seq1 = torch.tensor([    1, 11126,    42, 49189]).reshape(-1)
-    seq2 = torch.tensor([49189,  7306,   346,  5125,   451, 2443,    47, 49279,   198,  9519,  9531,    42, 49279]).reshape(-1)
-    input_ids = torch.cat([seq1, image_tokens_seq, seq2]).long()
-    input_ids = torch.tensor(input_ids).reshape(1, -1)
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(device, dtype=torch.bfloat16)
 
-    outputs = model(
-        tokens = input_ids,
-        patch_attention_mask = patch_attention_mask,
-        pixel_values = pixel_values,
-    )
+    for key, item in inputs.items():
+        print(key)
+
+    pixel_attention_mask = inputs['pixel_attention_mask']
+    pixel_values = inputs['pixel_values'] 
+    input_ids = inputs['input_ids']
+
+    print(pixel_values.shape)
+
+    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+        outputs = model(
+            tokens = input_ids,
+            patch_attention_mask = pixel_attention_mask,
+            pixel_values = pixel_values,
+        )
 
     print(outputs)
 

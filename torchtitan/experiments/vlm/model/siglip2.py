@@ -14,91 +14,6 @@ from torchtitan.models.attention import build_attention, init_attention_mask
 from .args import Siglip2ModelArgs
 
 
-def resize_positional_embeddings(
-    pos_embs_HWD: torch.Tensor,
-    spatial_shapes_N2: torch.Tensor,
-    max_length: int,
-) -> torch.Tensor:
-    """
-    Resize the learned 2D positional embeddings to image-specific size and pad to a fixed size.
-
-    Args:
-        pos_embs_HWD (`torch.Tensor`):
-            Position embeddings of shape (height, width, embed_dim)
-        spatial_shapes (`torch.LongTensor`):
-            Spatial shapes of shape (batch_size, 2) to resize the positional embeddings to
-        max_length (`int`):
-            Maximum length of the positional embeddings to pad resized positional embeddings to
-
-    Returns:
-        `torch.Tensor`: Embeddings of shape (batch_size, max_length, embed_dim)
-    """
-    _, _, D = pos_embs_HWD.shape
-    B, _ = spatial_shapes_N2.shape
-
-    resized_embs_BLD = torch.empty(
-        (B, max_length, D),
-        device=pos_embs_HWD.device,
-        dtype=pos_embs_HWD.dtype,
-    )
-
-    # TODO: group images by size, and do interpolate,
-    # or cache the interpolate output so we do this once per size
-    for i in range(B):
-        height, width = spatial_shapes_N2[i].tolist()
-        if (height + width) == 0:  # Skip empty padding images
-            continue
-
-        resized_emb = F.interpolate(
-            E.rearrange(pos_embs_HWD, "h w d -> 1 d h w"),
-            size=(height, width),
-            mode="bilinear",
-            align_corners=False,
-            antialias=True,
-        )
-
-        resized_emb_LD = E.rearrange(resized_emb, "1 d h w -> (h w) d")
-        resized_embs_BLD[i, : int(height * width)] = resized_emb_LD
-
-    return resized_embs_BLD
-
-
-class VisionEmbeddings(nn.Module):
-    """
-    DEPRECATED
-    """
-    def __init__(self, args: Siglip2ModelArgs):
-        super().__init__()
-        self.patch_embedding = nn.Linear(
-            in_features=args.n_channels * args.patch_size * args.patch_size,
-            out_features=args.dim,
-        )
-        self.position_embedding = nn.Embedding(args.n_pos_embs**2, args.dim)
-        self.n_pos_embs = args.n_pos_embs
-
-    def init_weights(self):
-        nn.init.trunc_normal_(self.patch_embedding.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.position_embedding.weight)
-
-    def forward(self, pixels_NLD: torch.Tensor, grid_hw: torch.Tensor) -> torch.Tensor:
-        # Apply patch embeddings to already patchified pixel values
-        patch_embeds_NLD = self.patch_embedding(pixels_NLD)
-
-        # Get positional resized and padded positional embeddings
-        pos_emb_HWD = self.position_embedding.weight.reshape(
-            self.n_pos_embs, self.n_pos_embs, -1
-        )
-        spatial_h = E.reduce(grid_hw[:, :, 0], "n l -> n", reduction="max") + 1
-        spatial_w = E.reduce(grid_hw[:, :, 1], "n l -> n", reduction="max") + 1
-        spatial_shapes = torch.stack([spatial_h, spatial_w], dim=-1).long()
-        resized_positional_embeddings = resize_positional_embeddings(
-            pos_emb_HWD,
-            spatial_shapes,
-            max_length=pixels_NLD.shape[1],
-        )
-        # Add positional embeddings to patch embeddings
-        embeddings = patch_embeds_NLD + resized_positional_embeddings
-        return embeddings
 
 class SmolVLMVisionEmbeddings(nn.Module):
     """
@@ -266,12 +181,10 @@ class VisionTransformer(nn.Module):
 
     def forward(
         self,
-        pixel_values_NLD: torch.FloatTensor,
+        pixel_values: torch.FloatTensor,
         patch_attention_mask: torch.BoolTensor,
     ):
-        #init_attention_mask(pixel_masks_NL, eos_id=self.eos_id)
-
-        h = self.embeddings(pixel_values_NLD, patch_attention_mask)
+        h = self.embeddings(pixel_values, patch_attention_mask)
 
         for layer in self.layers.values():
             h = layer(h)

@@ -43,7 +43,7 @@ min_lr_factor = 0.0
 
 [training]
 local_batch_size = 1
-seq_len = 256
+seq_len = 2048
 max_patches_per_image = 1024
 max_images_per_batch = 16
 # packing_buffer_size = 100

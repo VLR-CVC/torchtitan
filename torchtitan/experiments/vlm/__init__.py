@@ -32,13 +32,23 @@ siglip2_configs = {
         ffn_dim=256,
         n_layers=4,
         n_heads=2,
+    ),
+    "256M": Siglip2ModelArgs(
+        dim=768,
+        ffn_dim=2304,
+        n_layers=12,
+        n_heads=12,
     )
 }
 
 llama3_siglip2_configs = {
     "debugmodel": Llama3Siglip2ModelArgs(
         encoder=siglip2_configs["debugmodel"],
-        dim=256, n_layers=6, n_heads=16, vocab_size=2048, rope_theta=500000
+        dim=256,
+        n_layers=6,
+        n_heads=16,
+        vocab_size=50000,
+        rope_theta=500000,
     ),
     "debugmodel_flex_attn": Llama3Siglip2ModelArgs(
         encoder=siglip2_configs["debugmodel"],
@@ -51,44 +61,15 @@ llama3_siglip2_configs = {
         attn_mask_type="block_causal",
     ),
     "256M": Llama3Siglip2ModelArgs(
-        encoder=siglip2_configs["debugmodel"],
+        encoder=siglip2_configs["256M"],
         dim=576,
         n_layers=30,
         n_heads=9,
         n_kv_heads=3,
         ffn_dim_multiplier=1.3,
         multiple_of=1024,
-        rope_theta=500000,
-    ),
-    "8B": Llama3Siglip2ModelArgs(
-        encoder=siglip2_configs["debugmodel"],
-        dim=4096,
-        n_layers=32,
-        n_heads=32,
-        n_kv_heads=8,
-        ffn_dim_multiplier=1.3,
-        multiple_of=1024,
-        rope_theta=500000,
-    ),
-    "70B": Llama3Siglip2ModelArgs(
-        encoder=siglip2_configs["debugmodel"],
-        dim=8192,
-        n_layers=80,
-        n_heads=64,
-        n_kv_heads=8,
-        ffn_dim_multiplier=1.3,
-        multiple_of=4096,
-        rope_theta=500000,
-    ),
-    "405B": Llama3Siglip2ModelArgs(
-        encoder=siglip2_configs["debugmodel"],
-        dim=16384,
-        n_layers=126,
-        n_heads=128,
-        n_kv_heads=8,
-        ffn_dim_multiplier=1.2,
-        multiple_of=4096,
-        rope_theta=500000,
+        rope_theta=100000,
+        vocab_size=49280,
     ),
 }
 

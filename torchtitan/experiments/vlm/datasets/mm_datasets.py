@@ -40,7 +40,7 @@ IGNORE_INDEX = -100
 IMAGE_TOKEN_ID = 49190
 
 
-
+import time
 
 def _process_finevision_sample(
         sample: dict[str, Any],
@@ -419,3 +419,23 @@ def build_mm_dataloader(
     )
 
     return base_dataloader
+
+if __name__ == "__main__":
+
+
+    tokenizer = HuggingFaceTokenizer('/home-local/tockier/torchtitan/assets/hf/SmolVLM2-256M-Video-Instruct/')
+    dataset = MultiModalDataset(
+        dataset_name='finevision',
+        dataset_path='HuggingFaceM4/FineVision',
+        tokenizer=tokenizer,
+        batch_size=1,
+        seq_len=4096,
+        patch_size=16,
+        spatial_merge_size=2,
+        packing_buffer_size=0,
+        special_tokens=None,
+    )
+
+    for sample in dataset:
+        print(sample)
+        exit()

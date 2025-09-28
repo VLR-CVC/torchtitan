@@ -83,6 +83,9 @@ class HuggingFaceTokenizer(BaseTokenizer):
                 return json.load(f)
         return None
 
+    def add_special_tokens(self, *args, **kwargs):
+        self.tokenizer(*args, **kwargs)
+
     def _load_tokenizer_from_path(self, tokenizer_path: str) -> Tokenizer:
         """Load tokenizer from various file formats."""
         if not os.path.exists(tokenizer_path):

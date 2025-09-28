@@ -12,7 +12,7 @@ from torchtitan.models.llama3 import TransformerModelArgs as Llama3Args
 
 @dataclass
 class Siglip2ModelArgs:
-    dim: int = 1152
+    dim: int = 768
     ffn_dim: int = 3072
     n_layers: int = 12
     n_heads: int = 12
@@ -20,7 +20,7 @@ class Siglip2ModelArgs:
     n_pos_embs: int = 16  # Number of positional embeddings per h&w
     n_channels: int = 3  # RGB channels
     patch_size: int = 16
-    image_size: int = 224
+    image_size: int = 512
 
     scale_factor: int = 2
 
@@ -34,6 +34,7 @@ class Llama3Siglip2ModelArgs(Llama3Args):
     encoder: Siglip2ModelArgs = field(default_factory=Siglip2ModelArgs)
     tokenizer_name: str = 'HuggingFaceTB/SmolLM2-360M-Instruct'
     img_token_id: int = 49190
+    vocab_size: int = 49280
 
     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
         super().update_from_config(job_config, **kwargs)

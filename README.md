@@ -2,7 +2,9 @@
 
 ---
 
-## VLR torchtitan clone that we modify according to our needs
+# torchtitan fork with added support for Vision Language Model Pre-Training
+
+### Developed by the Vision, Language and Reading group at the Computer Vision Center, Barcelona
 
 Current features:
 - explanation of config params

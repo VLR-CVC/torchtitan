@@ -2,7 +2,7 @@
 
 ---
 
-# torchtitan fork with added support for Vision Language Model Pre-Training
+# torchtitan fork for Vision Language Model pre-training
 
 ### Developed by the Vision, Language and Reading group at the Computer Vision Center, Barcelona
 
@@ -11,9 +11,9 @@ Current features:
 - training of `Llama3.2-1B` in CVC cluster (LM)
 
 Future features:
+- `SmolVLM` training and evaluation (HF port)
 - `Llama3.2-1B` finetuning and eval (LM)
 - `Llama3 + SigLip` training and evaluation (variable resolution)
-- `SmolVLM` training and evaluation (HF port)
 - `Qwen 2.5VL` training and evaluation (HF port)
 - own docs folder
 

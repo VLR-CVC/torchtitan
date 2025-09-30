@@ -14,8 +14,8 @@ from torchtitan.models.llama3 import Transformer as Llama3
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
-torch.set_printoptions(threshold=10_000)
-
+import lovely_tensors as lt
+lt.monkey_patch()
 
 class SmolVLMSimpleMLP(nn.Module):
     def __init__(self, config):
@@ -84,7 +84,6 @@ class Llama3Siglip2Transformer(Llama3):
         image_mask = input_ids == image_token_id
 
         num_image_tokens = image_mask.sum(dim=1)
-        print(f'num_img_token {num_image_tokens}')
         """
         if not torch.all(num_image_tokens % patch_size == 0):
             raise ValueError("At least one sample has <image> tokens not divisible by patch_size.")
@@ -149,7 +148,7 @@ class Llama3Siglip2Transformer(Llama3):
 
     def forward(
             self,
-            tokens: torch.Tensor,
+            input_ids: torch.Tensor,
             eos_id: int | None = None,
             input_batch: torch.Tensor | None = None,
             pixel_values: torch.Tensor | None = None,
@@ -158,21 +157,15 @@ class Llama3Siglip2Transformer(Llama3):
             ):
         if self.model_args.use_flex_attn:
             init_attention_mask(
-                    input_batch if input_batch is not None else tokens, eos_id=self.eos_id
+                    input_batch if input_batch is not None else input_ids, eos_id=self.eos_id
                     )
 
-        import torch.distributed as dist
-
-        vocab_size = self.tok_embeddings.num_embeddings
-        max_id = vocab_size - 1
-
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
-        embed_tokens = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+        embed_tokens = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
         if self.encoder is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
-
-            hidden_states = self._fuse_vision_text(embed_tokens, vision_tokens, tokens)
+            hidden_states = self._fuse_vision_text(embed_tokens, vision_tokens, input_ids)
 
         for layer in self.layers.values():
             hidden_states = layer(hidden_states, self.freqs_cis)
@@ -185,44 +178,37 @@ if __name__ == "__main__":
 
     from transformers import AutoProcessor
 
+    processor = AutoProcessor.from_pretrained('HuggingFaceTB/SmolVLM2-256M-Video-Instruct')
+
+    device = torch.device('cuda:4')
+
     siglip2_configs = {
-        "debugmodel": Siglip2ModelArgs(
-            dim=128,
-            ffn_dim=256,
-            n_layers=4,
-            n_heads=2,
-        ),
-        "256M": Siglip2ModelArgs(
-            dim=768,
-            ffn_dim=2304,
-            n_layers=12,
-            n_heads=12,
-        )
-    }
+            "debugmodel": Siglip2ModelArgs(
+                dim=128,
+                ffn_dim=256,
+                n_layers=4,
+                n_heads=2,
+                ),
+            "256M": Siglip2ModelArgs(
+                dim=768,
+                ffn_dim=3072,
+                n_layers=12,
+                n_heads=12,
+                )
+            }
+    configs = {
+            "256M": Llama3Siglip2ModelArgs(
+                encoder=siglip2_configs["256M"],
+                dim=576,
+                n_layers=30,
+                n_heads=9,
+                n_kv_heads=3,
+                ffn_dim=1536,
+                ),
+            }
 
-    llama3_siglip2_configs = {
-        "debugmodel": Llama3Siglip2ModelArgs(
-            encoder=siglip2_configs["debugmodel"],
-            dim=256,
-            n_layers=6,
-            n_heads=16,
-            vocab_size=50000,
-            rope_theta=500000,
-        ),
-        "256M": Llama3Siglip2ModelArgs(
-            encoder=siglip2_configs["256M"],
-            dim=576,
-            n_layers=30,
-            n_heads=9,
-            n_kv_heads=3,
-            ffn_dim_multiplier=1.3,
-            multiple_of=1024,
-            rope_theta=100000,
-            vocab_size=49280,
-        ),
-    }
 
-    args = llama3_siglip2_configs["256M"]
+    args = configs["256M"]
 
     device = torch.device("cuda:4")
     model = Llama3Siglip2Transformer(args).to(device)
@@ -260,21 +246,17 @@ if __name__ == "__main__":
         return_tensors="pt",
     ).to(device, dtype=torch.bfloat16)
 
-    for key, item in inputs.items():
-        print(key)
-
     pixel_attention_mask = inputs['pixel_attention_mask']
     pixel_values = inputs['pixel_values'] 
     input_ids = inputs['input_ids']
 
-    print(pixel_values.shape)
+    print(pixel_values.plt)
 
     with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
         outputs = model(
-            tokens = input_ids,
+            input_ids = input_ids,
             patch_attention_mask = pixel_attention_mask,
             pixel_values = pixel_values,
         )
 
-    print(outputs)
-
+    print(outputs.plt)

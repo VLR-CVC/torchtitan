@@ -34,8 +34,8 @@ from .text_utils import process_text_with_images
 
 from tokenizers import Tokenizer
 
-# template is loaded from file
-#CHAT_TEMPLATE = "{%- for message in messages %}{{'<image><|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}\n{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
+from transformers import AutoProcessor
+
 IGNORE_INDEX = -100
 IMAGE_TOKEN_ID = 49190
 
@@ -49,7 +49,7 @@ def _process_finevision_sample(
     sample_texts = sample.get('texts')
     sample_images = sample.get('images')
 
-    images = [load_image_PIL(image) for image in sample_images]
+    images = [load_image_PIL(image.resize((512, 512))) for image in sample_images]
 
     return {
         "images": images,
@@ -168,18 +168,8 @@ class MultiModalDataset(IterableDataset, Stateful):
 
         self._tokenizer.image_id = 49190
 
-        # MAGIC NUMBERS
-        tile_size = 224
-        max_num_tiles = 1
-        self.transform_image = CLIPTransform(
-            image_mean=(0.48145466, 0.4578275, 0.40821073),
-            image_std=(0.26862954, 0.26130258, 0.27577711),
-            tile_size=tile_size,
-            possible_resolutions=None,
-            max_num_tiles=max_num_tiles,
-            resample="bilinear",
-            resize_to_max_canvas=False,
-        )
+        HF_Processor = AutoProcessor.from_pretrained('HuggingFaceTB/SmolVLM2-256M-Video-Instruct')
+        self.image_processor = HF_Processor.image_processor
 
 
     def __iter__(self):
@@ -228,23 +218,35 @@ class MultiModalDataset(IterableDataset, Stateful):
     def process_sample(
         self, sample
     ) -> dict[str, Any]:
-        sample = self.sample_processor(sample)
-        processed_images = [self.transform_image(img) for img in sample["images"]]
 
-        images = [img['image'] for img in processed_images]
-        aspect_ratios = [img['aspect_ratio'] for img in processed_images]
+        # OUR text Processor
+        sample = self.sample_processor(sample)
+
+        # HF image processor
+        images = self.image_processor.fetch_images(sample['images'])
+        vision_inputs = self.image_processor(images)
+
+        image_rows = vision_inputs.pop("rows", None)
+        image_cols = vision_inputs.pop("cols", None)
+
+        pixel_values = vision_inputs['pixel_values']
+        patch_attention_mask = vision_inputs['pixel_attention_mask']
+        
+        pixel_values = torch.tensor(pixel_values).squeeze()
 
         messages = sample['texts']
 
+        # we use OUR chat template for finevision!!!
         conv_ids, mask, attention_mask = self.apply_template_and_create_mask(
             messages
         )
 
+        # the labels are needed to just calculate the loss over the assistant tokens
         labels = self._get_labels(conv_ids, mask)
 
         return {
-            "images": images,
-            "aspect_ratios": aspect_ratios,
+            "pixel_values": pixel_values,
+            "patch_attention_mask": patch_attention_mask,
             "input_ids": conv_ids,
             "attention_mask": attention_mask,
             "labels": labels,

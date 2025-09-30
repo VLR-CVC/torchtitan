@@ -58,60 +58,6 @@ def _pixel_to_patch_mask(
 
 @dataclass
 class MultiModalCollatorNLD:
-    """Multimodal collator that works with image patches in NLD format.
-    N: Number of images (vision encoder's batch size)
-    L: Length of patches (vision encoder's sequence length)
-    D: Dimension of a patch (3 * spatial_patch_size**2 * temporral patch_size)
-
-    This module provides a collator class that handles both image and text data,
-    converting images to patches and preparing text for model input.
-
-    Example:
-        >>> # Initialize collator
-        >>> collator = MultiModalCollatorNLD(
-        ...     batch_size=2,
-        ...     seq_len=32,
-        ...     max_images_per_batch=4,
-        ...     max_patch_per_image=6,
-        ...     patch_size=16,
-        ...     padding_idx=0,
-        ... )
-        >>>
-        >>> # Create sample batch
-        >>> batch = [
-        ...     {
-        ...         "input_ids": torch.tensor([1, 2, 3]),
-        ...         "labels": torch.tensor([2, 3, 4]),
-        ...         "pixel_values": [
-        ...             torch.randn(1, 32, 32, 3),
-        ...             torch.randn(1, 32, 48, 3)
-        ...         ]
-        ...     },
-        ...     {
-        ...         "input_ids": torch.tensor([5, 6]),
-        ...         "labels": torch.tensor([6, 7]),
-        ...         "pixel_values": [
-        ...             torch.randn(1, 32, 32, 3)   # One image
-        ...         ]
-        ...     }
-        ... ]
-        >>>
-        >>> # Collate batch
-        >>> outputs = collator(batch)
-        >>>
-        >>> # Examine outputs
-        >>> print(outputs["input_ids"].shape)     # (2, 32)     - Padded to seq_len
-        >>> print(outputs["labels"].shape)        # (2, 32)     - Padded to seq_len
-        >>> print(outputs["pixel_values"].shape)  # (4, 6, 768) - (N=4 images, L=6 patches, D=16*16*3)
-        >>> print(outputs["grid_thw"].shape)      # (4, 6, 3)   - Coordinates for each patch
-        >>>
-        >>> # The collated batch has:
-        >>> # 1. Text tensors padded to max length
-        >>> # 2. Images converted to patches in NLD format
-        >>> # 3. Grid coordinates for each patch
-        >>> # 4. All tensors properly batched and padded
-    """
-
     batch_size: int  # LLM's batch size
     seq_len: int  # LLM's maximum sequence length
 
@@ -121,41 +67,6 @@ class MultiModalCollatorNLD:
 
     padding_idx: int = 0
     ignore_idx: int = -100
-
-    """
-    def process_images(
-        self, all_images: list[torch.Tensor]
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        Process a list of image tensors into patches with coordinate grids.
-
-        Args:
-            all_images: list of image tensors, each of shape (T, H, W, 3)
-        if not all_images:
-            return None, None
-
-        pixel_values_list, grid_list = [], []
-        for img in all_images:
-            # Convert single image to patches
-            #patches, grids = convert_to_patches(img, patch_size=self.patch_size)
-            pixel_values, grids = get_grids(img, patch_size=self.patch_size)
-
-            # Pad/truncate to max patches DEPRECATED
-            #patches, grids = pad_patches(patches, grids, self.max_patches_per_image)
-
-            pixel_values_list.append(pixel_values)
-            grid_list.append(grids)
-
-        # Stack all images
-        pixel_values = torch.stack(pixel_values_list)
-        grids = torch.stack(grid_list)
-        # TODO: need for stack?
-
-        # Pad to max_images_per_batch with empty images
-        # DEPRECATED
-        #patches, grids = pad_empty_images_to_target_batch_size(patches, grids, self.max_images_per_batch)
-
-        return pixel_values, grids
-    """
 
     def process_text(
         self,
@@ -216,31 +127,19 @@ class MultiModalCollatorNLD:
                 - images: list of tensors, each (1, 3, H, W)
         """
 
-        images = [sample['images'] for sample in batch]
-        # WHAT IS THIS INDEXING
-        image_shapes = [tuple(img[0].shape[1:]) for img in images]
+        pixel_values = [sample['pixel_values'] for sample in batch]
+        patch_attention_mask = [sample['patch_attention_mask'] for sample in batch]
 
-        pixel_attention_mask = create_pixel_attention_mask_vectorized(image_shapes)
+        try:
+            patch_attention_mask = torch.tensor(patch_attention_mask).squeeze()
+        except Exception:
+            print(len(patch_attention_mask))
+            print(len(patch_attention_mask[0]))
+            print(len(patch_attention_mask[0][0]))
 
-        B, max_h, max_w = pixel_attention_mask.shape
-        C = 3 # should be 3
-        
-        # Pad images in a channels-last format
-        padded_pixels = torch.zeros(
-            (B, C, max_h, max_w), dtype=images[0][0].dtype
-        )
-        for i, img in enumerate(images):
-            h, w = image_shapes[i]
-            padded_pixels[i, :, :h, :w] = img[0].squeeze(0)
+        padded_pixels = torch.stack(pixel_values, dim=0)
 
-        # Convert the pixel mask to the final patch mask
-        patch_attention_mask = _pixel_to_patch_mask(
-            pixel_attention_mask, self.patch_size
-        )
-
-        # Process text and pad to batch size
         input_ids, labels = self.process_text(batch)
-        # RETURN PATCH ATTENTION MASK
         input_dict = {"input": input_ids, "pixel_values": padded_pixels, "patch_attention_mask": patch_attention_mask}
 
         return input_dict, labels

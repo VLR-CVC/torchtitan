@@ -164,7 +164,7 @@ class MultiModalDataset(IterableDataset, Stateful):
         self.infinite = infinite
         self._sample_idx = 0
 
-        self.chat_template = open("torchtitan/experiments/vlm/datasets/template.jinja").read()
+        self.chat_template = open("torchtitan/vlr/smolvlm/datasets/template.jinja").read()
 
         self._tokenizer.image_id = 49190
 

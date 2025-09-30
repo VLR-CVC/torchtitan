@@ -12,7 +12,7 @@ set -ex
 # LOG_RANK=0,1 NGPU=4 ./run_train.sh
 NGPU=${NGPU:-"1"}
 export LOG_RANK=${LOG_RANK:-0}
-CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/experiments/vlm/train_configs/llama_siglip_256.toml"}
+CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/vlr/smolvlm/train_configs/llama_siglip_256.toml"}
 TRAIN_FILE=${TRAIN_FILE:-"torchtitan.train"}
 
 CUDA_VISIBLE_DEVICES=4 \

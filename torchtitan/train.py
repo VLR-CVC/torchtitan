@@ -138,10 +138,6 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             else None
         )
 
-        self.tokenizer.add_special_tokens(
-            {"image_token": "<image>"}
-        )
-
         self.dataloader = self.train_spec.build_dataloader_fn(
             dp_world_size=dp_degree,
             dp_rank=dp_rank,

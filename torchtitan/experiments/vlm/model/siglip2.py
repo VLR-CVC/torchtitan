@@ -129,16 +129,21 @@ class Attention(nn.Module):
         for linear in (self.q_proj, self.k_proj, self.v_proj, self.out_proj):
             nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
 
+class PytorchGELUTanh(nn.Module):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return nn.functional.gelu(input, approximate='tanh')
+
 
 class FeedForward(nn.Module):
     def __init__(self, args: Siglip2ModelArgs):
         super().__init__()
         self.fc1 = nn.Linear(args.dim, args.ffn_dim)
         self.fc2 = nn.Linear(args.ffn_dim, args.dim)
+        self.act_fn  = PytorchGELUTanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc1(x)
-        x = F.gelu(x, approximate="tanh")
+        x = self.act_fn(x)
         x = self.fc2(x)
         return x
 
@@ -174,8 +179,8 @@ class VisionTransformer(nn.Module):
         self.eos_id = 11
 
         self.embeddings = SmolVLMVisionEmbeddings(args)
-        self.layers = nn.ModuleDict(
-            {str(idx): TransformerLayer(args) for idx in range(args.n_layers)}
+        self.layers = nn.ModuleList(
+            [TransformerLayer(args) for idx in range(args.n_layers)]
         )
         self.post_layernorm = nn.LayerNorm(args.dim, eps=args.layer_norm_eps)
 
@@ -186,7 +191,7 @@ class VisionTransformer(nn.Module):
     ):
         h = self.embeddings(pixel_values, patch_attention_mask)
 
-        for layer in self.layers.values():
+        for layer in self.layers:
             h = layer(h)
         h = self.post_layernorm(h)
 
@@ -194,6 +199,6 @@ class VisionTransformer(nn.Module):
 
     def init_weights(self):
         self.embeddings.init_weights()
-        for layer in self.layers.values():
+        for layer in self.layers:
             layer.init_weights()
         self.post_layernorm.reset_parameters()

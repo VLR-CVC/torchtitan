@@ -24,7 +24,7 @@ enable_wandb = false
 
 [model]
 name = "llama3-siglip2"
-flavor = "debugmodel"
+flavor = "256M"
 # test folder with tokenizer.json, for debug purpose only
 hf_assets_path = "tests/assets/tokenizer"
 # converters = ["float8"]
@@ -41,10 +41,8 @@ decay_type = "linear"
 min_lr_factor = 0.0
 
 [training]
-local_batch_size = 1
+local_batch_size = 2
 seq_len = 2048
-max_patches_per_image = 1024
-max_images_per_batch = 16
 # packing_buffer_size = 100
 max_norm = 1.0  # grad norm clipping
 steps = 2000

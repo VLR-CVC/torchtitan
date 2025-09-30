@@ -223,9 +223,8 @@ class MultiModalCollatorNLD:
                 - images: list of tensors, each (1, 3, H, W)
         """
 
-        images = [sample['images'] for sample in batch]
-        # WHAT IS THIS INDEXING
-        image_shapes = [tuple(img[0].shape[1:]) for img in images]
+        pixel_values = [sample['pixel_values'] for sample in batch]
+        patch_attention_mask = [sample['patch_attention_mask'] for sample in batch]
 
         # Process all images in batch
         all_images = [

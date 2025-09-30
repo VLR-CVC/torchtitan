@@ -159,7 +159,6 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             utils.set_default_dtype(TORCH_DTYPE_MAP[job_config.training.dtype]),
         ):
             model = self.train_spec.model_cls(model_args)
-            print(model)
 
         # Build the collection of model converters. No-op if `model.converters` empty
         model_converters = build_model_converters(job_config, parallel_dims)
@@ -404,9 +403,6 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 if isinstance(v, torch.Tensor):
                     input_dict[k] = v.to(device_type)
             labels = labels.to(device_type)
-
-            for key, value in input_dict.items():
-                print(key, value.shape)
 
             yield input_dict, labels
 

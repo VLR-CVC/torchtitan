@@ -20,6 +20,7 @@ from torchtitan.components.dataloader import ParallelAwareDataloader
 from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.config import JobConfig
 from torchtitan.tools.logging import logger
+from torchtitan.datasets.utils import load_image
 
 
 def _load_c4_dataset(dataset_path: str, split: str):
@@ -32,6 +33,22 @@ def _process_c4_text(sample: dict[str, Any]) -> str:
     return sample["text"]
 
 
+def _load_finevision(dataset_path: str, split: str):
+    return load_dataset(dataset_path, split=split, streaming=True)
+
+
+def _process_finevision(
+    sample: dict[str, list[str] | list[torch.Tensor]],
+):
+    sample_image = sample["images"]
+    sample_texts = sample["texts"]
+
+    return {
+        "images": [load_image(image) for image in sample_image],
+        "texts": [str(text) for text in sample_texts],
+    }
+
+
 @dataclass
 class DatasetConfig:
     path: str
@@ -39,6 +56,7 @@ class DatasetConfig:
     text_processor: Callable
 
 
+# TODO: see what `partial` does here
 # Add your dataset here here - more information at docs/datasets.md
 DATASETS = {
     "c4": DatasetConfig(
@@ -55,6 +73,11 @@ DATASETS = {
         path="allenai/c4",
         loader=partial(_load_c4_dataset, split="validation"),
         text_processor=_process_c4_text,
+    ),
+    "finevision": DatasetConfig(
+        path="HuggingFaceM4/finevision",
+        loader=partial(_load_finevision, split="train"),
+        text_processor=_process_finevision,
     ),
 }
 

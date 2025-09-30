@@ -154,8 +154,11 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         logger.info(
             f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
         )
+
+        # META init
         with torch.device("meta"):
             model = self.train_spec.model_cls(model_args)
+            print(model)
 
         # Build the collection of model converters. No-op if `model.converters` empty
         model_converters = build_model_converters(job_config, parallel_dims)
@@ -401,6 +404,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                     input_dict[k] = v.to(device_type)
             labels = labels.to(device_type)
 
+            for key, value in input_dict.items():
+                print(key, value.shape)
+
             yield input_dict, labels
 
     def forward_backward_step(
@@ -419,6 +425,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
 
         # apply context parallelism if cp is enabled
         # ensure CP handles the separate freqs_cis buffer for each pp stage
+        inputs = input_dict["input"]
+        extra_inputs = {k: v for k, v in input_dict.items() if k != "input"}
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
                 cp_mesh=parallel_dims.world_mesh["cp"],
@@ -439,7 +447,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 )
                 if self.pp_has_first_stage:
                     self.pp_schedule.step(
-                        inputs, target=targets, losses=losses, input_batch=inputs
+                        inputs, **extra_inputs, target=targets, losses=losses, input_batch=inputs
                     )
                 else:
                     self.pp_schedule.step(
@@ -458,7 +466,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             with self.train_context(optional_context_parallel_ctx):
                 assert len(model_parts) == 1
                 with self.maybe_enable_amp:
-                    pred = model_parts[0](inputs)
+                    pred = model_parts[0](inputs, eos_id=self.tokenizer.eos_id, **extra_inputs)
                     loss = self.loss_fn(pred, labels)
                 # need to free to before bwd to avoid peaking memory
                 del pred

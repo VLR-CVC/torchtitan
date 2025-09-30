@@ -11,7 +11,7 @@ import torch
 import torchvision
 from torchvision.transforms.v2 import functional as F
 
-from utils import (
+from .utils import (
     find_supported_resolutions,
     get_canvas_best_fit,
     resize_with_pad,
@@ -21,7 +21,6 @@ from utils import (
 from torchtitan.tools.logging import logger
 
 
-# https://github.com/VLR-CVC/torchtitan/blob/main/torchtitan/experiments/multimodal/transform.py
 class CLIPTransform:
     """
     This class accepts images of any size and dynamically resizes, pads, normalizes and tiles it
@@ -176,7 +175,7 @@ class CLIPTransform:
             image = F.normalize(image, mean=self.mean, std=self.std)
 
         # Divide the image into equally sized tiles
-        image = tile_crop(image=image, tile_size=self.tile_size)
+        image = tile_crop(image=image, tile_size=self.tile_size).squeeze()
 
         aspect_ratio = torch.tensor(best_resolution).reshape(-1) // self.tile_size
 

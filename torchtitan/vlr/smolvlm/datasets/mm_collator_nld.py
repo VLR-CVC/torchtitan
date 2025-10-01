@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+import numpy as np
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
 
@@ -130,12 +131,7 @@ class MultiModalCollatorNLD:
         pixel_values = [sample['pixel_values'] for sample in batch]
         patch_attention_mask = [sample['patch_attention_mask'] for sample in batch]
 
-        try:
-            patch_attention_mask = torch.tensor(patch_attention_mask).squeeze()
-        except Exception:
-            print(len(patch_attention_mask))
-            print(len(patch_attention_mask[0]))
-            print(len(patch_attention_mask[0][0]))
+        patch_attention_mask = torch.tensor(np.array(patch_attention_mask)).squeeze()
 
         padded_pixels = torch.stack(pixel_values, dim=0)
 

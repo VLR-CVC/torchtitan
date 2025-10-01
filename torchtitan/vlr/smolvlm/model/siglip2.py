@@ -179,9 +179,11 @@ class VisionTransformer(nn.Module):
         self.eos_id = 11
 
         self.embeddings = SmolVLMVisionEmbeddings(args)
-        self.layers = nn.ModuleList(
-            [TransformerLayer(args) for idx in range(args.n_layers)]
-        )
+
+        self.layers = nn.ModuleDict()
+        for layer_id in range(args.n_layers):
+            self.layers[str(layer_id)] = TransformerLayer(args)
+
         self.post_layernorm = nn.LayerNorm(args.dim, eps=args.layer_norm_eps)
 
     def forward(
@@ -191,7 +193,7 @@ class VisionTransformer(nn.Module):
     ):
         h = self.embeddings(pixel_values, patch_attention_mask)
 
-        for layer in self.layers:
+        for layer in self.layers.values():
             h = layer(h)
         h = self.post_layernorm(h)
 
@@ -199,6 +201,6 @@ class VisionTransformer(nn.Module):
 
     def init_weights(self):
         self.embeddings.init_weights()
-        for layer in self.layers:
+        for layer in self.layers.values():
             layer.init_weights()
         self.post_layernorm.reset_parameters()

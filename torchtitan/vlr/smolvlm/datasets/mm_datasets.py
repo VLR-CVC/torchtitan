@@ -14,6 +14,7 @@ It supports both streaming and non-streaming datasets from HuggingFace.
 from typing import Any, Callable
 
 import torch
+import numpy as np
 from datasets import Dataset, load_dataset
 from datasets.distributed import split_dataset_by_node
 from torch.distributed.checkpoint.stateful import Stateful
@@ -365,7 +366,7 @@ class MultiModalDataset(IterableDataset, Stateful):
         pixel_values = vision_inputs['pixel_values']
         patch_attention_mask = vision_inputs['pixel_attention_mask']
         
-        pixel_values = torch.tensor(pixel_values).squeeze()
+        pixel_values = torch.tensor(np.array(pixel_values)).squeeze()
 
         messages = sample['texts']
 

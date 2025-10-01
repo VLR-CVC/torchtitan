@@ -22,7 +22,7 @@ from torchtitan.components.metrics import (
     build_metrics_processor,
     ensure_pp_loss_visible,
 )
-from torchtitan.config import ConfigManager, JobConfig
+from torchtitan.config import ConfigManager, JobConfig, TORCH_DTYPE_MAP
 from torchtitan.distributed import ParallelDims, utils as dist_utils
 from torchtitan.models.attention import init_attention_mask
 from torchtitan.protocols.model_converter import build_model_converters
@@ -155,8 +155,10 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
         )
 
-        # META init
-        with torch.device("meta"):
+        with (
+            torch.device("meta"),
+            utils.set_default_dtype(TORCH_DTYPE_MAP[job_config.training.dtype]),
+        ):
             model = self.train_spec.model_cls(model_args)
 
         # Build the collection of model converters. No-op if `model.converters` empty
@@ -355,7 +357,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 dp_rank=dp_rank,
                 tokenizer=self.tokenizer,
                 parallel_dims=parallel_dims,
-                loss_fn=self.train_spec.build_loss_fn(job_config),
+                loss_fn=self.loss_fn,
                 validation_context=self.train_context,
                 maybe_enable_amp=self.maybe_enable_amp,
                 metrics_processor=self.metrics_processor,
@@ -412,6 +414,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         parallel_dims = self.parallel_dims
 
         inputs = input_dict["input"]
+        extra_inputs = {k: v for k, v in input_dict.items() if k != "input"}
         # Create the FlexAttention mask according to the input
         if getattr(self.model_args, "use_flex_attn", False):
             cp_mesh = (
@@ -443,7 +446,11 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 )
                 if self.pp_has_first_stage:
                     self.pp_schedule.step(
-                        inputs, **extra_inputs, target=targets, losses=losses, input_batch=inputs
+                        inputs,
+                        **extra_inputs,
+                        target=targets,
+                        losses=losses,
+                        input_batch=inputs,
                     )
                 else:
                     self.pp_schedule.step(
@@ -453,7 +460,10 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             # accumulate losses across pipeline microbatches
             # TODO: PP+FSDP unexpectedly puts the loss back to the CPU
             loss = (
-                torch.mean(torch.stack(losses)).to(self.device)
+                # using sum instead of mean because we already rescale the
+                # loss_fn down by a factor of n_microbatches in
+                # torchtitan/distributed/pipeline_parallel.py
+                torch.sum(torch.stack(losses)).to(self.device)
                 if self.pp_has_last_stage
                 else torch.tensor([-1.0], device=self.device)
             )
@@ -462,9 +472,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             with self.train_context(optional_context_parallel_ctx):
                 assert len(model_parts) == 1
                 with self.maybe_enable_amp:
-                    pred = model_parts[0](inputs, eos_id=self.tokenizer.eos_id, **extra_inputs)
+                    pred = model_parts[0](inputs, **extra_inputs)
                     loss = self.loss_fn(pred, labels)
-                # need to free to before bwd to avoid peaking memory
+                # need to free pred before bwd to avoid peaking memory
                 del pred
                 loss.backward()
 
@@ -484,7 +494,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         accumulated_losses = []
         # If data runs out during gradient accumulation, that
         # entire step will not be executed.
-        for microbatch in range(self.gradient_accumulation_steps):
+        for _microbatch in range(self.gradient_accumulation_steps):
             input_dict, labels = next(data_iterator)
             loss = self.forward_backward_step(input_dict, labels)
             accumulated_losses.append(loss.detach())
@@ -600,7 +610,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                     self.job_config.validation.enable
                     and self.validator.should_validate(self.step)
                 ):
-                    self.validator.validate(self.model_parts, self.step)
+                    with self.loss_fn.no_rescale():
+                        self.validator.validate(self.model_parts, self.step)
 
                 # signal the profiler that the next profiling step has started
                 if torch_profiler:

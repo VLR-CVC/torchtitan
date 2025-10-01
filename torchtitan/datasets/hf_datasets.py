@@ -4,8 +4,6 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-from dataclasses import dataclass
-
 from functools import partial
 from typing import Any, Callable
 
@@ -19,6 +17,7 @@ from torch.utils.data import IterableDataset
 from torchtitan.components.dataloader import ParallelAwareDataloader
 from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.config import JobConfig
+from torchtitan.datasets import DatasetConfig
 from torchtitan.tools.logging import logger
 from torchtitan.datasets.utils import load_image
 
@@ -62,17 +61,17 @@ DATASETS = {
     "c4": DatasetConfig(
         path="allenai/c4",
         loader=partial(_load_c4_dataset, split="train"),
-        text_processor=_process_c4_text,
+        sample_processor=_process_c4_text,
     ),
     "c4_test": DatasetConfig(
         path="tests/assets/c4_test",
         loader=lambda path: load_dataset(path, split="train"),
-        text_processor=_process_c4_text,
+        sample_processor=_process_c4_text,
     ),
     "c4_validation": DatasetConfig(
         path="allenai/c4",
         loader=partial(_load_c4_dataset, split="validation"),
-        text_processor=_process_c4_text,
+        sample_processor=_process_c4_text,
     ),
     "finevision": DatasetConfig(
         path="HuggingFaceM4/finevision",
@@ -95,7 +94,7 @@ def _validate_dataset(
     config = DATASETS[dataset_name]
     path = dataset_path or config.path
     logger.info(f"Preparing {dataset_name} dataset from {path}")
-    return path, config.loader, config.text_processor
+    return path, config.loader, config.sample_processor
 
 
 class HuggingFaceDataset(IterableDataset, Stateful):

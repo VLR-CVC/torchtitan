@@ -231,7 +231,7 @@ class TokenChoiceTopKRouter(nn.Module):
                 scores, k=self.top_k, dim=1
             )
 
-        if self.score_func == "sigmoid" and self.route_norm:
+        if self.route_norm:
             denominator = top_scores.sum(dim=-1, keepdim=True) + 1e-20
             top_scores = top_scores / denominator
         top_scores = top_scores * self.route_scale
@@ -417,17 +417,19 @@ class MoE(nn.Module):
         # shape (bs*slen*top_k, dim)
         routed_output = self.experts(routed_input, num_tokens_per_expert)
 
+        # shared expert
+        # Note: we execute the shared expert before scoring the output of the routed expert
+        # to "implicitly" overlap the shared expert compute with token combine communication
+        if self.shared_experts is not None:
+            out = self.shared_experts(x)
+        else:
+            out = torch.zeros_like(x)
+
         if not self.score_before_experts:
             routed_output = (
                 routed_output.to(torch.float32)
                 * top_scores_experts_sorted.reshape(-1, 1)
             ).to(x.dtype)
-
-        # shared expert
-        if self.shared_experts is not None:
-            out = self.shared_experts(x)
-        else:
-            out = torch.zeros_like(x)
 
         out = out.scatter_add(
             dim=0, index=token_indices_experts_sorted, src=routed_output

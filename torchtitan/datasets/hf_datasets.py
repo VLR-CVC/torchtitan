@@ -48,13 +48,6 @@ def _process_finevision(
     }
 
 
-@dataclass
-class DatasetConfig:
-    path: str
-    loader: Callable
-    text_processor: Callable
-
-
 # TODO: see what `partial` does here
 # Add your dataset here here - more information at docs/datasets.md
 DATASETS = {
@@ -76,7 +69,7 @@ DATASETS = {
     "finevision": DatasetConfig(
         path="HuggingFaceM4/finevision",
         loader=partial(_load_finevision, split="train"),
-        text_processor=_process_finevision,
+        sample_processor=_process_finevision,
     ),
 }
 

@@ -9,9 +9,9 @@
 Current features:
 - explanation of config params
 - training of `Llama3.2-1B` in CVC cluster (LM)
+- `SmolVLM` pretraining and finetuning
 
 Future features:
-- `SmolVLM` training and evaluation (HF port)
 - `Llama3.2-1B` finetuning and eval (LM)
 - `Llama3 + SigLip` training and evaluation (variable resolution)
 - `Qwen 2.5VL` training and evaluation (HF port)

@@ -67,7 +67,7 @@ class MMDatasetConfig:
 
 MM_DATASETS = {
     "finevision": MMDatasetConfig(
-        path="HuggingFaceM4/FineVision",
+        path="/data-net/storage/datasets/FineVision",
         loader=lambda path: load_dataset(path, split="train", name='docvqa', streaming=True),
         sample_processor=_process_finevision_sample,
     ),

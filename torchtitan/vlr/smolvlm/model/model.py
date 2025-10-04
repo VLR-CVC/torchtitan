@@ -14,9 +14,6 @@ from torchtitan.models.llama3 import Transformer as Llama3
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
-import lovely_tensors as lt
-lt.monkey_patch()
-
 class SmolVLMSimpleMLP(nn.Module):
     def __init__(self, config):
         super().__init__()

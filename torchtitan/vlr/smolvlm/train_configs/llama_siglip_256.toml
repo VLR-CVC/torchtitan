@@ -1,4 +1,4 @@
-# torchtitan Config.toml
+# torchtitan Config.tomlsmoltrain
 
 [experimental]
 custom_args_module = "torchtitan.vlr.smolvlm.assets.job_config"
@@ -32,21 +32,21 @@ hf_assets_path = "./assets/hf/SmolLM2-360M-Instruct"
 
 [optimizer]
 name = "AdamW"
-lr = 1e-4
+lr = 1e-6
 eps = 1e-8
 
 [lr_scheduler]
 warmup_steps = 0  # lr scheduler warm up, normally 20% of the train steps
-decay_ratio = 0.1  # lr scheduler decay ratio, 80% of the train steps
-decay_type = "linear"
+#decay_ratio = None  # lr scheduler decay ratio, 80% of the train steps
+decay_type = "cosine"
 min_lr_factor = 0.0
 
 [training]
-local_batch_size = 2
+local_batch_size = 14
 seq_len = 2048
 # packing_buffer_size = 100
 max_norm = 1.0  # grad norm clipping
-steps = 2000
+steps = 800
 dataset = "finevision"
 #dataset = "cc12m"
 
@@ -68,14 +68,14 @@ pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
-enable = false
+enable = true
 folder = "checkpoint"
-interval = 10
+interval = 100
 last_save_model_only = true
 #initial_load_in_hf = true
 #last_save_in_hf = true
-export_dtype = "float32"
-async_mode = "async"  # ["disabled", "async", "async_with_pinned_mem"]
+export_dtype = "bfloat16"
+async_mode = "async_with_pinned_mem"  # ["disabled", "async", "async_with_pinned_mem"]
 
 [activation_checkpoint]
 mode = "selective"  # ["none", "selective", "full"]

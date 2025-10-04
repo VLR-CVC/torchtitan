@@ -72,6 +72,7 @@ def parallelize_vlm(
     if job_config.compile.enable:
         apply_compile(model)
         apply_compile(model.encoder)
+        #model.projector = torch.compile(model.projector)
 
     if parallel_dims.fsdp_enabled:
         # apply FSDP or HSDP, potentially with Context Parallel
@@ -164,6 +165,14 @@ def apply_fsdp(
             **fsdp_config,
             reshard_after_forward=reshard_after_forward,
         )
+
+    if model.projector is not None:
+        fully_shard(
+            model.projector,
+            **fsdp_config,
+            reshard_after_forward=reshard_after_forward,
+        )
+
     for layer_id, transformer_block in model.encoder.layers.items():
         fully_shard(
             transformer_block,

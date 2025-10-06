@@ -4,14 +4,14 @@
 custom_args_module = "torchtitan.vlr.smolvlm.assets.job_config"
 
 [job]
-dump_folder = "./outputs"
-description = "Llama 3 Siglip2 VLM debug training"
+dump_folder = "./outputs_large"
+description = "Llama 3 Siglip2 VLM training"
 print_args = false
 
 [profiling]
-enable_profiling = false
+enable_profiling = true
 save_traces_folder = "profile_trace"
-profile_freq = 10
+profile_freq = 50
 enable_memory_snapshot = false
 save_memory_snapshot_folder = "memory_snapshot"
 
@@ -32,7 +32,7 @@ hf_assets_path = "./assets/hf/SmolLM2-360M-Instruct"
 
 [optimizer]
 name = "AdamW"
-lr = 1e-6
+lr = 1e-5
 eps = 1e-8
 
 [lr_scheduler]
@@ -42,11 +42,11 @@ decay_type = "cosine"
 min_lr_factor = 0.0
 
 [training]
-local_batch_size = 14
+local_batch_size = 9
 seq_len = 2048
 # packing_buffer_size = 100
 max_norm = 1.0  # grad norm clipping
-steps = 800
+steps = 13100
 dataset = "finevision"
 #dataset = "cc12m"
 
@@ -70,12 +70,12 @@ context_parallel_degree = 1
 [checkpoint]
 enable = true
 folder = "checkpoint"
-interval = 100
-last_save_model_only = true
+interval = 50
+last_save_model_only = false
 #initial_load_in_hf = true
 #last_save_in_hf = true
 export_dtype = "bfloat16"
-async_mode = "async_with_pinned_mem"  # ["disabled", "async", "async_with_pinned_mem"]
+async_mode = "async"  # ["disabled", "async", "async_with_pinned_mem"]
 
 [activation_checkpoint]
 mode = "selective"  # ["none", "selective", "full"]

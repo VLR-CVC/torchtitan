@@ -158,11 +158,11 @@ class Llama3Siglip2Transformer(Llama3):
                     )
 
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
-        embed_tokens = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
+        hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
-        if self.encoder is not None:
+        if self.encoder is not None and pixel_values is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
-            hidden_states = self._fuse_vision_text(embed_tokens, vision_tokens, input_ids)
+            hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
 
         for layer in self.layers.values():
             hidden_states = layer(hidden_states, self.freqs_cis)

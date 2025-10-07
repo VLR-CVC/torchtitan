@@ -137,8 +137,8 @@ class PytorchGELUTanh(nn.Module):
 class FeedForward(nn.Module):
     def __init__(self, args: Siglip2ModelArgs):
         super().__init__()
-        self.fc1 = nn.Linear(args.dim, args.ffn_dim)
-        self.fc2 = nn.Linear(args.ffn_dim, args.dim)
+        self.fc1 = nn.Linear(args.dim, args.ffn_dim, bias=True)
+        self.fc2 = nn.Linear(args.ffn_dim, args.dim, bias=True)
         self.act_fn  = PytorchGELUTanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -22,7 +22,7 @@ class Siglip2ModelArgs:
     patch_size: int = 16
     image_size: int = 512
 
-    scale_factor: int = 2
+    scale_factor: int = 4
 
     layer_norm_eps: float = 1e-6
     use_flex_attn: bool = True

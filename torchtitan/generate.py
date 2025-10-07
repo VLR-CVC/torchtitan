@@ -262,6 +262,7 @@ class Generator:
         
         # Decode output
         generated_ids = output_ids[0, input_ids.shape[1]:]
+        print(generated_ids.v)
         generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         
         return generated_text

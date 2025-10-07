@@ -26,19 +26,57 @@ class SmolVLMStateDictAdapter(StateDictAdapter):
         self.model_args = model_args
         self.hf_assets_path = hf_assets_path
         self.from_hf_map = {
-            "model.embed_tokens.weight": "tok_embeddings.weight",
-            "model.layers.{}.self_attn.q_proj.weight": "layers.{}.attention.wq.weight",
-            "model.layers.{}.self_attn.k_proj.weight": "layers.{}.attention.wk.weight",
-            "model.layers.{}.self_attn.v_proj.weight": "layers.{}.attention.wv.weight",
-            "model.layers.{}.self_attn.o_proj.weight": "layers.{}.attention.wo.weight",
-            "model.layers.{}.self_attn.rotary_emb.inv_freq": None,
-            "model.layers.{}.mlp.gate_proj.weight": "layers.{}.feed_forward.w1.weight",
-            "model.layers.{}.mlp.up_proj.weight": "layers.{}.feed_forward.w3.weight",
-            "model.layers.{}.mlp.down_proj.weight": "layers.{}.feed_forward.w2.weight",
-            "model.layers.{}.input_layernorm.weight": "layers.{}.attention_norm.weight",
-            "model.layers.{}.post_attention_layernorm.weight": "layers.{}.ffn_norm.weight",
-            "model.norm.weight": "norm.weight",
             "lm_head.weight": "output.weight",
+
+            "model.text_model.embed_tokens.weight": "tok_embeddings.weight", # check
+
+            "model.text_model.layers.{}.self_attn.q_proj.weight": "layers.{}.attention.wq.weight", # check
+            "model.text_model.layers.{}.self_attn.k_proj.weight": "layers.{}.attention.wk.weight", # check
+            "model.text_model.layers.{}.self_attn.v_proj.weight": "layers.{}.attention.wv.weight", # check
+            "model.text_model.layers.{}.self_attn.o_proj.weight": "layers.{}.attention.wo.weight", # check
+
+            #"model.layers.{}.self_attn.rotary_emb.inv_freq": None,
+
+            "model.text_model.layers.{}.mlp.gate_proj.weight": "layers.{}.feed_forward.gate_proj.weight", # check
+            "model.text_model.layers.{}.mlp.up_proj.weight": "layers.{}.feed_forward.up_proj.weight", # check
+            "model.text_model.layers.{}.mlp.down_proj.weight": "layers.{}.feed_forward.down_proj.weight", # check
+
+            "model.text_model.layers.{}.input_layernorm.weight": "layers.{}.attention_norm.weight", # check
+            "model.text_model.layers.{}.post_attention_layernorm.weight": "layers.{}.ffn_norm.weight", # check
+
+            "model.text_model.norm.weight": "norm.weight", # check
+
+            "model.vision_model.embeddings.patch_embedding.weight": "encoder.embeddings.patch_embedding.weight",
+            "model.vision_model.embeddings.patch_embedding.bias": "encoder.embeddings.patch_embedding.bias",
+
+            "model.vision_model.embeddings.position_embedding.weight": "encoder.embeddings.position_embedding.weight",
+
+            "model.vision_model.post_layernorm.weight": "encoder.post_layernorm.weight",
+            "model.vision_model.post_layernorm.bias": "encoder.post_layernorm.bias",
+
+            "model.vision_model.encoder.layers.{}.layer_norm1.weight": "encoder.layers.{}.layer_norm1.weight",
+            "model.vision_model.encoder.layers.{}.layer_norm1.bias": "encoder.layers.{}.layer_norm1.bias",
+            "model.vision_model.encoder.layers.{}.layer_norm2.weight": "encoder.layers.{}.layer_norm2.weight",
+            "model.vision_model.encoder.layers.{}.layer_norm2.bias": "encoder.layers.{}.layer_norm2.bias",
+
+            "model.vision_model.encoder.layers.{}.mlp.fc1.weight": "encoder.layers.{}.mlp.fc1.weight",
+            "model.vision_model.encoder.layers.{}.mlp.fc1.bias": "encoder.layers.{}.mlp.fc1.bias",
+            "model.vision_model.encoder.layers.{}.mlp.fc2.weight": "encoder.layers.{}.mlp.fc2.weight",
+            "model.vision_model.encoder.layers.{}.mlp.fc2.bias": "encoder.layers.{}.mlp.fc2.bias",
+
+            "model.vision_model.encoder.layers.{}.self_attn.k_proj.weight": "encoder.layers.{}.self_attn.k_proj.weight",
+            "model.vision_model.encoder.layers.{}.self_attn.k_proj.bias": "encoder.layers.{}.self_attn.k_proj.bias",
+
+            "model.vision_model.encoder.layers.{}.self_attn.out_proj.weight": "encoder.layers.{}.self_attn.out_proj.weight",
+            "model.vision_model.encoder.layers.{}.self_attn.out_proj.bias": "encoder.layers.{}.self_attn.out_proj.bias",
+
+            "model.vision_model.encoder.layers.{}.self_attn.q_proj.weight": "encoder.layers.{}.self_attn.q_proj.weight",
+            "model.vision_model.encoder.layers.{}.self_attn.q_proj.bias": "encoder.layers.{}.self_attn.q_proj.bias",
+
+            "model.vision_model.encoder.layers.{}.self_attn.v_proj.weight": "encoder.layers.{}.self_attn.v_proj.weight",
+            "model.vision_model.encoder.layers.{}.self_attn.v_proj.bias": "encoder.layers.{}.self_attn.v_proj.bias",
+
+            "model.connector.modality_projection.proj.weight": "projector.modality_projection.proj.weight",
         }
 
     # HuggingFace permutation function (exact copy from their conversion script)

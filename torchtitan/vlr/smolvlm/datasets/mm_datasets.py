@@ -440,5 +440,6 @@ if __name__ == "__main__":
     )
 
     for sample in dataset:
-        print(sample)
+        #print(sample)
+        print(sample['input_ids'].v)
         exit()

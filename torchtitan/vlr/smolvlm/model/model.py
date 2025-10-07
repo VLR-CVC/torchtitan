@@ -14,13 +14,16 @@ from torchtitan.models.llama3 import Transformer as Llama3
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
+import lovely_tensors as lt
+lt.monkey_patch()
+
 class SmolVLMSimpleMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         # TODO: scale_factor to config
-        input_size = config.encoder.dim * (config.encoder.scale_factor**2)
+        input_size = 12288
         output_size = config.dim
-        self.proj = nn.Linear(input_size, output_size, bias=False)
+        self.proj = nn.Linear(12288, 576, bias=False)
 
     def init_weights(self):
         nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=0.02)
@@ -35,7 +38,7 @@ class Projector(nn.Module):
         self.scale_factor = config.encoder.scale_factor
         self.modality_projection = SmolVLMSimpleMLP(config)
 
-    def pixel_shuffle(self, x, scale_factor=2):
+    def pixel_shuffle(self, x, scale_factor=4):
         bsz, seq, embed_dim = x.size()
         height = width = int(seq**0.5)
         x = x.view(bsz, height, width, embed_dim)

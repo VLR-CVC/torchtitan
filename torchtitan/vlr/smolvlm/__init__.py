@@ -71,6 +71,8 @@ llama3_siglip2_configs = {
         multiple_of=1024,
         rope_theta=100000,
         vocab_size=49280,
+        use_flex_attn = False,
+        attn_mask_type = "causal",
     ),
 }
 

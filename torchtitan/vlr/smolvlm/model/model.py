@@ -50,6 +50,8 @@ class Projector(nn.Module):
         return x
 
     def forward(self, image_hidden_states):
+        print("image hidden")
+        print(image_hidden_states)
         image_hidden_states = self.pixel_shuffle(image_hidden_states, self.scale_factor)
         image_hidden_states = self.modality_projection(image_hidden_states)
         return image_hidden_states
@@ -163,9 +165,13 @@ class Llama3Siglip2Transformer(Llama3):
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
+        """
         if self.encoder is not None and pixel_values is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
             hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
+        else:
+            "THERE are not images"
+        """
 
         for layer in self.layers.values():
             hidden_states = layer(hidden_states, self.freqs_cis)
@@ -204,6 +210,8 @@ if __name__ == "__main__":
                 n_heads=9,
                 n_kv_heads=3,
                 ffn_dim=1536,
+                use_flex_attn = False,
+                attn_mask_type = "causal",
                 ),
             }
 

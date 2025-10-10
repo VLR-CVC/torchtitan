@@ -4,7 +4,7 @@
 custom_args_module = "torchtitan.vlr.smolvlm.assets.job_config"
 
 [job]
-dump_folder = "./outputs"
+dump_folder = "/data/users"
 description = "Llama 3 Siglip2 VLM training"
 print_args = false
 

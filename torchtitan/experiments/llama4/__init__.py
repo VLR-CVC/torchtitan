@@ -8,13 +8,14 @@ from torchtitan.components.loss import build_cross_entropy_loss
 from torchtitan.components.lr_scheduler import build_lr_schedulers
 from torchtitan.components.optimizer import build_optimizers_with_moe_load_balancing
 from torchtitan.components.tokenizer import build_hf_tokenizer
+from torchtitan.components.validate import build_validator
 from torchtitan.datasets.hf_datasets import build_hf_dataloader
 from torchtitan.models.llama3 import pipeline_llama
 from torchtitan.models.moe import MoEArgs
 from torchtitan.protocols.train_spec import TrainSpec
 
 from .infra.parallelize import parallelize_llama
-from .model.args import TransformerModelArgs
+from .model.args import RoPEScalingArgs, TransformerModelArgs
 from .model.model import Transformer
 from .model.state_dict_adapter import Llama4StateDictAdapter
 
@@ -32,6 +33,7 @@ llama4_configs = {
         n_heads=16,
         vocab_size=2048,
         rope_theta=500000,
+        rope_scaling_args=RoPEScalingArgs(),
     ),
     "17bx16e": TransformerModelArgs(
         dim=5120,
@@ -41,6 +43,7 @@ llama4_configs = {
         ffn_dim_multiplier=1.2,
         multiple_of=2048,
         rope_theta=500000,
+        rope_scaling_args=RoPEScalingArgs(),
         max_seq_len=10485760,
         moe_args=MoEArgs(num_experts=16),
         interleave_moe_layer_step=1,
@@ -61,6 +64,7 @@ llama4_configs = {
         n_heads=16,
         vocab_size=2048,
         rope_theta=500000,
+        rope_scaling_args=RoPEScalingArgs(),
         every_n_layers_nope=4,
         fixed_attn_block_size=256,
         use_flex_attn=True,
@@ -74,6 +78,7 @@ llama4_configs = {
         ffn_dim_multiplier=1.2,
         multiple_of=2048,
         rope_theta=500000,
+        rope_scaling_args=RoPEScalingArgs(),
         max_seq_len=10485760,
         moe_args=MoEArgs(num_experts=16),
         interleave_moe_layer_step=1,
@@ -99,7 +104,6 @@ llama4_configs = {
 
 def get_train_spec() -> TrainSpec:
     return TrainSpec(
-        name="llama4",
         model_cls=Transformer,
         model_args=llama4_configs,
         parallelize_fn=parallelize_llama,
@@ -109,5 +113,6 @@ def get_train_spec() -> TrainSpec:
         build_dataloader_fn=build_hf_dataloader,
         build_tokenizer_fn=build_hf_tokenizer,
         build_loss_fn=build_cross_entropy_loss,
+        build_validator_fn=build_validator,
         state_dict_adapter=Llama4StateDictAdapter,
     )

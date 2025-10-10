@@ -551,8 +551,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     def train(self):
         job_config = self.job_config
 
-        self.checkpointer.load(step=job_config.checkpoint.load_step)
         logger.info(f"Training starts at step {self.step + 1}")
+        self.checkpointer.load(step=job_config.checkpoint.load_step)
 
         leaf_folder = (
             ""

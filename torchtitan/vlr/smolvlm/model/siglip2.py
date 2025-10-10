@@ -107,10 +107,10 @@ class Attention(nn.Module):
         self.out_proj = nn.Linear(self.dim, self.dim)
 
         self.attn = build_attention(
-            use_flex_attn=False, attn_mask_type=args.attn_mask_type
+            use_flex_attn=False, attn_mask_type=None
         )
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
         # Use self.head_dim instead of `n_heads` to infer the actual
@@ -137,8 +137,8 @@ class PytorchGELUTanh(nn.Module):
 class FeedForward(nn.Module):
     def __init__(self, args: Siglip2ModelArgs):
         super().__init__()
-        self.fc1 = nn.Linear(args.dim, args.ffn_dim)
-        self.fc2 = nn.Linear(args.ffn_dim, args.dim)
+        self.fc1 = nn.Linear(args.dim, args.ffn_dim, bias=True)
+        self.fc2 = nn.Linear(args.ffn_dim, args.dim, bias=True)
         self.act_fn  = PytorchGELUTanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -160,8 +160,8 @@ class TransformerLayer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(args.dim, eps=args.layer_norm_eps)
         self.mlp = FeedForward(args)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.self_attn(self.layer_norm1(x))
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        x = x + self.self_attn(self.layer_norm1(x), attention_mask=attention_mask)
         x = x + self.mlp(self.layer_norm2(x))
         return x
 
@@ -194,7 +194,7 @@ class VisionTransformer(nn.Module):
         h = self.embeddings(pixel_values, patch_attention_mask)
 
         for layer in self.layers.values():
-            h = layer(h)
+            h = layer(h, patch_attention_mask)
         h = self.post_layernorm(h)
 
         return h

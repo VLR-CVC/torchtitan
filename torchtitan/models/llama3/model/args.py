@@ -29,7 +29,7 @@ class TransformerModelArgs(BaseModelArgs):
     norm_eps: float = 1e-5
     rope_theta: float = 10000
 
-    ffn_dim: int = 8192
+    ffn_dim: int = 1536
 
     max_seq_len: int = 131072
     # If `True`, then each transformer block init uses its layer ID, and if

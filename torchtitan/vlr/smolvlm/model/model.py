@@ -14,13 +14,16 @@ from torchtitan.models.llama3 import Transformer as Llama3
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
+import lovely_tensors as lt
+lt.monkey_patch()
+
 class SmolVLMSimpleMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         # TODO: scale_factor to config
-        input_size = config.encoder.dim * (config.encoder.scale_factor**2)
+        input_size = 12288
         output_size = config.dim
-        self.proj = nn.Linear(input_size, output_size, bias=False)
+        self.proj = nn.Linear(12288, 576, bias=False)
 
     def init_weights(self):
         nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=0.02)
@@ -35,7 +38,7 @@ class Projector(nn.Module):
         self.scale_factor = config.encoder.scale_factor
         self.modality_projection = SmolVLMSimpleMLP(config)
 
-    def pixel_shuffle(self, x, scale_factor=2):
+    def pixel_shuffle(self, x, scale_factor=4):
         bsz, seq, embed_dim = x.size()
         height = width = int(seq**0.5)
         x = x.view(bsz, height, width, embed_dim)
@@ -47,6 +50,8 @@ class Projector(nn.Module):
         return x
 
     def forward(self, image_hidden_states):
+        print("image hidden")
+        print(image_hidden_states)
         image_hidden_states = self.pixel_shuffle(image_hidden_states, self.scale_factor)
         image_hidden_states = self.modality_projection(image_hidden_states)
         return image_hidden_states
@@ -160,9 +165,13 @@ class Llama3Siglip2Transformer(Llama3):
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
+        """
         if self.encoder is not None and pixel_values is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
             hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
+        else:
+            "THERE are not images"
+        """
 
         for layer in self.layers.values():
             hidden_states = layer(hidden_states, self.freqs_cis)
@@ -201,6 +210,8 @@ if __name__ == "__main__":
                 n_heads=9,
                 n_kv_heads=3,
                 ffn_dim=1536,
+                use_flex_attn = False,
+                attn_mask_type = "causal",
                 ),
             }
 

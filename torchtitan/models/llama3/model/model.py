@@ -6,18 +6,33 @@
 #
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved.
 
+import math
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.attention.flex_attention import and_masks, BlockMask
 
-from torchtitan.models.attention import build_attention
+from torchtitan.components.tokenizer import BaseTokenizer
+from torchtitan.models.attention import (
+    create_attention_mask,
+    FlexAttentionWrapper,
+    get_causal_mask_mod,
+    get_document_mask_mod,
+    ScaledDotProductAttentionWrapper,
+)
+from torchtitan.protocols.model import AttentionMasksType
 from torchtitan.protocols.train_spec import ModelProtocol
 
-from .args import TransformerModelArgs
+from .args import RoPEScalingArgs, TransformerModelArgs
 
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
+def precompute_freqs_cis(
+    dim: int,
+    end: int,
+    theta: float = 10000.0,
+    scaling_args: RoPEScalingArgs = RoPEScalingArgs(),
+) -> torch.Tensor:
     """
     Precompute the frequency tensor for complex exponentials (cis) with given dimensions.
 
@@ -29,11 +44,41 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Te
         dim (int): Dimension of the frequency tensor.
         end (int): End index for precomputing frequencies.
         theta (float | None): Scaling factor for frequency computation. Defaults to 10000.0.
-
+        scaling_args (RoPEScalingArgs | None): RoPE scaling arguments. Defaults to None.
+            scaling_factor (float): RoPE scaling multiplier; larger values
+                stretch positions to support longer contexts. Defaults to 8.0.
+            low_freq_factor (float): Extra scaling applied to the low-frequency
+                (long-wavelength) RoPE bands. Defaults to 1.0.
+            high_freq_factor (float): Extra scaling applied to the high-frequency
+                (short-wavelength) RoPE bands. Defaults to 4.0.
+            original_max_position_embeddings (int): Maximum position embeddings
+                for original model. Defaults to 8192.
     Returns:
         torch.Tensor: Precomputed frequency tensor with complex exponentials.
     """
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+
+    # apply rope scaling
+    scaling_factor = scaling_args.scaling_factor
+    low_freq_factor = scaling_args.low_freq_factor
+    high_freq_factor = scaling_args.high_freq_factor
+    original_max_position_embeddings = scaling_args.original_max_position_embeddings
+    wavelen = 2 * math.pi / freqs
+    high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+    low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+    # wavelen < high_freq_wavelen: do nothing
+    # wavelen > low_freq_wavelen: divide by scaling factor
+    freqs = torch.where(wavelen > low_freq_wavelen, freqs / scaling_factor, freqs)
+    # wavelen in between: linear interpolation of the scaled freqs and the original freqs
+    smooth_factor = (original_max_position_embeddings / wavelen - low_freq_factor) / (
+        high_freq_factor - low_freq_factor
+    )
+    smoothed_freqs = (
+        1 - smooth_factor
+    ) * freqs / scaling_factor + smooth_factor * freqs
+    is_medium_freqs = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+    freqs = torch.where(is_medium_freqs, smoothed_freqs, freqs)
+
     t = torch.arange(end, device=freqs.device)
     freqs = torch.outer(t, freqs).float()
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
@@ -129,11 +174,7 @@ class Attention(nn.Module):
     def __init__(self, model_args: TransformerModelArgs):
         super().__init__()
         self.n_heads = model_args.n_heads
-        self.n_kv_heads = (
-            model_args.n_heads
-            if model_args.n_kv_heads is None
-            else model_args.n_kv_heads
-        )
+        self.n_kv_heads = model_args.n_kv_heads
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = model_args.dim // model_args.n_heads
 
@@ -145,7 +186,12 @@ class Attention(nn.Module):
         self.wo = nn.Linear(
             model_args.n_heads * self.head_dim, model_args.dim, bias=False
         )
-        self.sdpa = build_attention(model_args.use_flex_attn, model_args.attn_mask_type)
+
+        self.use_flex_attn = model_args.use_flex_attn
+        if self.use_flex_attn:
+            self.inner_attention = FlexAttentionWrapper()
+        else:
+            self.inner_attention = ScaledDotProductAttentionWrapper(is_causal=True)
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
@@ -156,6 +202,7 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        attention_masks: AttentionMasksType | None,
     ):
         """
         Forward pass of the attention module.
@@ -189,7 +236,16 @@ class Attention(nn.Module):
         xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        output = self.sdpa(xq, xk, xv)
+        assert (
+            isinstance(attention_masks, BlockMask) or attention_masks is None
+        ), attention_masks
+
+        if self.use_flex_attn:
+            assert isinstance(attention_masks, BlockMask), attention_masks
+            output = self.inner_attention(xq, xk, xv, block_mask=attention_masks)
+        else:
+            assert attention_masks is None
+            output = self.inner_attention(xq, xk, xv)
 
         output = output.transpose(
             1, 2
@@ -218,29 +274,30 @@ class FeedForward(nn.Module):
     def __init__(
         self,
         dim: int,
-        hidden_dim: int,
-        multiple_of: int | None=None,
-        ffn_dim_multiplier: float | None=None
+        hidden_dim: int | None = None,
+        multiple_of: int | None = None,
+        ffn_dim_multiplier: float | None = None,
+        ffn_dim: int | None = None,
     ):
         super().__init__()
-        """
-        hidden_dim = int(2 * hidden_dim / 3)
-        # custom dim factor multiplier
-        if ffn_dim_multiplier is not None:
-            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        """
 
-        self.gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-        self.down_proj = nn.Linear(hidden_dim, dim, bias=False)
-        self.up_proj = nn.Linear(dim, hidden_dim, bias=False)
+        if not ffn_dim:
+            hidden_dim = int(2 * hidden_dim / 3)
+            # custom dim factor multiplier
+            if ffn_dim_multiplier is not None:
+                hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+            ffn_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+
+        self.w1 = nn.Linear(dim, ffn_dim, bias=False)
+        self.w2 = nn.Linear(ffn_dim, dim, bias=False)
+        self.w3 = nn.Linear(dim, ffn_dim, bias=False)
 
     def forward(self, x):
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self, init_std: float):
-        nn.init.trunc_normal_(self.gate_proj.weight, mean=0.0, std=0.02)
-        for linear in (self.up_proj, self.down_proj):
+        nn.init.trunc_normal_(self.w1.weight, mean=0.0, std=0.02)
+        for linear in (self.w2, self.w3):
             nn.init.trunc_normal_(linear.weight, mean=0.0, std=init_std)
 
 
@@ -271,7 +328,7 @@ class TransformerBlock(nn.Module):
         self.attention = Attention(model_args)
         self.feed_forward = FeedForward(
             dim=model_args.dim,
-            hidden_dim=model_args.ffn_dim,
+            ffn_dim=model_args.ffn_dim,
         )
         self.attention_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
         self.ffn_norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
@@ -285,6 +342,7 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        attention_masks: AttentionMasksType | None,
     ):
         """
         Perform a forward pass through the TransformerBlock.
@@ -297,7 +355,7 @@ class TransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(self.attention_norm(x), freqs_cis)
+        h = x + self.attention(self.attention_norm(x), freqs_cis, attention_masks)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -389,11 +447,34 @@ class Transformer(nn.Module, ModelProtocol):
             # relaxing in our CP enablement PR
             self.model_args.max_seq_len,
             self.model_args.rope_theta,
+            self.model_args.rope_scaling_args,
+        )
+
+    def get_attention_masks(
+        self,
+        input_batch: torch.Tensor,
+        tokenizer: BaseTokenizer,
+        extra_inputs: dict[str, torch.Tensor] | None = None,
+    ) -> AttentionMasksType:
+        mask_mods = [get_causal_mask_mod()]
+        match self.model_args.attn_mask_type:
+            case "causal":
+                B = 1
+            case "block_causal":
+                B = input_batch.shape[0]
+                mask_mods.append(get_document_mask_mod(input_batch, tokenizer.eos_id))
+            case _:
+                raise ValueError(
+                    f"Unknown attention mask type: {self.model_args.attn_mask_type}"
+                )
+        return create_attention_mask(
+            and_masks(*mask_mods), B, None, input_batch.shape[1], input_batch.shape[1]
         )
 
     def forward(
         self,
         tokens: torch.Tensor,
+        attention_masks: AttentionMasksType | None = None,
         input_batch: torch.Tensor | None = None,
     ):
         """
@@ -417,7 +498,7 @@ class Transformer(nn.Module, ModelProtocol):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.freqs_cis)
+            h = layer(h, self.freqs_cis, attention_masks=attention_masks)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h) if self.output else h

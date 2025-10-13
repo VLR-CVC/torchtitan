@@ -43,11 +43,12 @@ pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
-enable = false
+enable = true
 folder = "checkpoint"
+initial_load_in_hf = true
+load_only = true
 interval = 500
-last_save_model_only = true
-export_dtype = "float32"
+export_dtype = "bfloat16"
 async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
 
 [compile]

@@ -51,7 +51,7 @@ llama3_configs = {
 
     "8B": TransformerModelArgs(
         dim=4096,
-        ffn_dim=8192,
+        ffn_dim=14336,
         n_layers=32,
         n_heads=32,
         n_kv_heads=8,
@@ -83,7 +83,6 @@ llama3_configs = {
 
 def get_train_spec() -> TrainSpec:
     return TrainSpec(
-        name="llama3",
         model_cls=Transformer,
         model_args=llama3_configs,
         parallelize_fn=parallelize_llama,

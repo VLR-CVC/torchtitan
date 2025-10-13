@@ -42,7 +42,6 @@ ValidatorBuilder: TypeAlias = Callable[..., BaseValidator]
 
 @dataclass
 class TrainSpec:
-    name: str
     model_cls: type[ModelProtocol]
     model_args: Mapping[str, BaseModelArgs]
     parallelize_fn: ParallelizeFunction
@@ -60,13 +59,13 @@ class TrainSpec:
 _extra_train_specs: dict[str, TrainSpec] = {}
 
 
-def register_train_spec(train_spec: TrainSpec) -> None:
+def register_train_spec(name: str, train_spec: TrainSpec) -> None:
     global _extra_train_specs
-    if train_spec.name in _extra_train_specs:
-        raise ValueError(f"TrainSpec {train_spec.name} is already registered.")
+    if name in _extra_train_specs:
+        raise ValueError(f"TrainSpec {name} is already registered.")
 
     # user can define a TrainSpec from outside of torchtitan
-    _extra_train_specs[train_spec.name] = train_spec
+    _extra_train_specs[name] = train_spec
 
 
 def get_train_spec(name: str) -> TrainSpec:
@@ -77,12 +76,16 @@ def get_train_spec(name: str) -> TrainSpec:
 
     from torchtitan.experiments import _supported_experiments
     from torchtitan.models import _supported_models
+    from torchtitan.vlr import _supported_vlr_models
 
     if name in _supported_models:
         module = import_module(f"torchtitan.models.{name}")
         return module.get_train_spec()
     elif name in _supported_experiments:
         module = import_module(f"torchtitan.experiments.{name}")
+        return module.get_train_spec()
+    elif name in _supported_vlr_models:
+        module = import_module(f"torchtitan.vlr.{name}")
         return module.get_train_spec()
 
     raise ValueError(f"TrainSpec {name} is not registered.")

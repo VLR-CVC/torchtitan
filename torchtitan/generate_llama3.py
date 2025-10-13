@@ -8,13 +8,9 @@ import importlib
 import os
 import time
 from typing import Optional, List, Dict, Any
-import numpy as np
 
 import torch
-torch.set_printoptions(threshold=10_000)
 from torch.distributed.elastic.multiprocessing.errors import record
-from transformers import AutoProcessor
-from PIL import Image
 
 import torchtitan.protocols.train_spec as train_spec_module
 from torchtitan.components.checkpoint import CheckpointManager
@@ -56,13 +52,9 @@ def generate_next_token(
     temperature: float = 1.0,
     top_k: Optional[int] = None,
     rng: Optional[torch.Generator] = None,
-    **model_kwargs,
 ) -> torch.Tensor:
-    input_dict = {
-        "input_ids": x,
-        **model_kwargs,
-    }
-    logits = model(**input_dict)
+    # The model forward pass in torchtitan expects a `tokens` argument.
+    logits = model(tokens=x)
     probs = logits_to_probs(logits[:, -1, :], temperature, top_k)
     next_token = multinomial_sample_one(probs, rng=rng)
     return next_token
@@ -72,10 +64,9 @@ def generate_next_token(
 def _generate_sequence(
     model,
     input_ids: torch.Tensor,
+    *,
     max_new_tokens: int,
     temperature: float = 1.0,
-    pixel_values: torch.Tensor | None = None,
-    patch_attention_mask: torch.BoolTensor | None = None,
     top_k: Optional[int] = None,
     seed: Optional[int] = None,
 ) -> torch.Tensor:
@@ -96,8 +87,6 @@ def _generate_sequence(
             temperature=temperature,
             top_k=top_k,
             rng=rng,
-            pixel_values=pixel_values,
-            patch_attention_mask=patch_attention_mask,
         )
 
         generated_tokens = torch.cat([generated_tokens, next_token], dim=1)
@@ -108,7 +97,7 @@ def _generate_sequence(
 
 
 class Generator:
-    """Generator class for SmolVLM model inference."""
+    """Generator class for Llama3 model inference."""
 
     def __init__(self, job_config: JobConfig):
         torch._C._log_api_usage_once("torchtitan.generate")
@@ -127,6 +116,8 @@ class Generator:
         self.device = torch.device(f"{device_type}:{int(os.environ.get('LOCAL_RANK', 0))}")
         device_module.set_device(self.device)
 
+        # For generation, we usually use a single process or TP.
+        # We will not initialize the full distributed setup unless necessary.
         world_size = int(os.environ.get("WORLD_SIZE", 1))
         if world_size > 1:
             dist_utils.init_distributed(
@@ -205,33 +196,21 @@ class Generator:
         self.checkpointer.load(step=job_config.checkpoint.load_step)
         logger.info(f"Loaded checkpoint from step {job_config.checkpoint.load_step}")
 
-        self.processor = AutoProcessor.from_pretrained(job_config.model.hf_assets_path)
-        self.image_processor = self.processor.image_processor
-
-        template_path = "torchtitan/vlr/smolvlm/datasets/template.jinja"
-        if os.path.exists(template_path):
-            with open(template_path, 'r') as f:
-                self.chat_template = f.read()
-        else:
-            logger.warning(f"Chat template not found at {template_path}, using default")
-            self.chat_template = None
-
-        self.max_new_tokens = getattr(job_config, 'max_new_tokens', 16)
-        self.temperature = getattr(job_config, 'temperature', 0)
-        self.top_k = getattr(job_config, 'top_k', None)
+        self.max_new_tokens = getattr(job_config, 'max_new_tokens', 256)
+        self.temperature = getattr(job_config, 'temperature', 0.7)
+        self.top_k = getattr(job_config, 'top_k', 50)
 
         logger.info("Generator initialized successfully")
 
     @torch.no_grad()
     def generate(
         self,
-        messages: List[Dict[str, Any]] = None,
-        images: Optional[List[Image.Image]] = None,
+        prompts: List[str],
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         top_k: Optional[int] = None,
         seed: Optional[int] = None,
-    ) -> str:
+    ) -> List[str]:
         max_new_tokens = max_new_tokens or self.max_new_tokens
         temperature = temperature or self.temperature
         top_k = top_k or self.top_k
@@ -239,143 +218,28 @@ class Generator:
         model = self.model_parts[0]
         model.eval()
 
-        pixel_values = None
-        patch_attention_mask = None
+        # For simplicity, this example handles one prompt at a time.
+        # Batching can be added for efficiency.
+        generated_texts = []
+        for prompt in prompts:
+            input_ids = self.tokenizer.encode(prompt, add_bos=True, add_eos=False)
+            input_ids = torch.tensor(input_ids, dtype=torch.long, device=self.device)
 
-        if images:
-            vision_inputs = self.image_processor(images, return_tensors="pt")
-            pixel_values = vision_inputs['pixel_values'].to(self.device, dtype=torch.bfloat16)
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                output_ids = _generate_sequence(
+                    model=model,
+                    input_ids=input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_k=top_k,
+                    seed=seed,
+                )
 
-            if 'pixel_attention_mask' in vision_inputs:
-                patch_attention_mask = vision_inputs['pixel_attention_mask'].to(self.device)
+            generated_ids = output_ids[0, input_ids.shape[0]:]
+            generated_text = self.tokenizer.decode(generated_ids.tolist(), skip_special_tokens=True)
+            generated_texts.append(generated_text)
 
-        """
-        if self.chat_template:
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                chat_template=self.chat_template,
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
-        else:
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
-
-        if isinstance(input_ids, dict):
-            input_ids = input_ids["input_ids"]
-
-        input_ids = input_ids.to(self.device)
-        """
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": messages},
-                    {"type": "image", "image": images},
-                ]
-            },
-        ]
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Caption this image"},
-                    {"type": "image", "image": "../cat.jpg"},
-                ]
-            },
-        ]
-
-
-        inputs = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-            return_dict=True,
-            return_tensors="pt",
-        )
-
-        inputs = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.device, dtype=torch.bfloat16)
-
-        input_ids = inputs['input_ids']
-        pixel_values = inputs.get('pixel_values', None)
-        patch_attention_mask = inputs.get('pixel_attention_mask', None)
-
-
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            logits = model(
-                input_ids=input_ids,
-                pixel_values=pixel_values,
-                patch_attention_mask=patch_attention_mask,
-            )
-
-        print(logits)
-
-        """
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            output_ids = _generate_sequence(
-                model=model,
-                input_ids=input_ids,
-                pixel_values=pixel_values,
-                patch_attention_mask=patch_attention_mask,
-                max_new_tokens=64,
-                temperature=temperature,
-                top_k=top_k,
-                seed=seed,
-            )
-
-        print(output_ids.v)
-        generated_text = self.processor.batch_decode(output_ids, skip_special_tokens=True)
-
-        print(generated_text)
-        """
-
-    def interactive_generate(self):
-        """Interactive generation mode for testing."""
-        logger.info("Starting interactive generation mode. Type 'quit' to exit.")
-
-        while True:
-            try:
-                user_input = input("\nEnter your prompt (or 'quit' to exit): ").strip()
-
-                if user_input.lower() == 'quit':
-                    break
-
-                image_path = input("Enter image path (or press Enter to skip): ").strip()
-
-                images = None
-                if image_path and os.path.exists(image_path):
-                    image = Image.open(image_path).convert('RGB')
-                    logger.info(f"Loaded image from {image_path}")
-                elif image_path:
-                    logger.warning(f"Image path {image_path} not found, proceeding without image")
-
-                logger.info("Generating response...")
-                start_time = time.perf_counter()
-
-                response = self.generate(user_input, images=image)
-
-                generation_time = time.perf_counter() - start_time
-
-            except KeyboardInterrupt:
-                logger.info("\nInterrupted by user")
-                break
-            except Exception as e:
-                logger.error(f"Error during generation: {e}")
-                import traceback
-                traceback.print_exc()
+        return generated_texts
 
     def close(self):
         """Cleanup resources."""
@@ -389,13 +253,33 @@ def main():
     """Main entry point for generation."""
     init_logger()
 
+    # Parse configuration
     config_manager = ConfigManager()
     config = config_manager.parse_args()
 
     generator = None
     try:
+        # Initialize generator
         generator = Generator(config)
-        generator.generate()
+
+        prompts = [
+            "What is the meaning of life?",
+            "Translate 'hello world' to French.",
+        ]
+
+        logger.info(f"Generating for prompts: {prompts}")
+        start_time = time.perf_counter()
+
+        responses = generator.generate(prompts)
+
+        generation_time = time.perf_counter() - start_time
+        logger.info(f"Generation completed in {generation_time:.2f}s")
+
+        for prompt, response in zip(prompts, responses):
+            print("-" * 20)
+            print(f"Prompt: {prompt}")
+            print(f"Response: {response}")
+            print("-" * 20)
 
     except Exception as e:
         logger.error(f"Error during generation: {e}")

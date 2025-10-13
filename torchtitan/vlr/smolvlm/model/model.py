@@ -8,19 +8,23 @@ import einops as E
 import torch
 from torch import nn
 
-from torchtitan.models.attention import init_attention_mask
+from torchtitan.protocols.model import AttentionMasksType
+from torchtitan.models.attention import ScaledDotProductAttentionWrapper
 from torchtitan.models.llama3 import Transformer as Llama3
 
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .siglip2 import VisionTransformer
 
+import lovely_tensors as lt
+lt.monkey_patch()
+
 class SmolVLMSimpleMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         # TODO: scale_factor to config
-        input_size = config.encoder.dim * (config.encoder.scale_factor**2)
+        input_size = 12288
         output_size = config.dim
-        self.proj = nn.Linear(input_size, output_size, bias=False)
+        self.proj = nn.Linear(12288, 576, bias=False)
 
     def init_weights(self):
         nn.init.trunc_normal_(self.proj.weight, mean=0.0, std=0.02)
@@ -35,7 +39,7 @@ class Projector(nn.Module):
         self.scale_factor = config.encoder.scale_factor
         self.modality_projection = SmolVLMSimpleMLP(config)
 
-    def pixel_shuffle(self, x, scale_factor=2):
+    def pixel_shuffle(self, x, scale_factor=4):
         bsz, seq, embed_dim = x.size()
         height = width = int(seq**0.5)
         x = x.view(bsz, height, width, embed_dim)
@@ -107,8 +111,10 @@ class Llama3Siglip2Transformer(Llama3):
             pixel_attention_mask
     ):
         batch_size, num_images, num_channels, height, width = pixel_values.shape
-        pixel_values = pixel_values.bfloat16()  # fp16 compatibility
+        pixel_values = pixel_values.to(dtype=torch.bfloat16)  # fp16 compatibility
         pixel_values = pixel_values.view(batch_size * num_images, *pixel_values.shape[2:])
+
+        patch_size = 16
 
         # Remove padding images - padding images are full 0.
         nb_values_per_image = pixel_values.shape[1:].numel()
@@ -119,7 +125,7 @@ class Llama3Siglip2Transformer(Llama3):
             real_images_inds[0] = True
 
         pixel_values = pixel_values[real_images_inds].contiguous()
-
+        # Handle the vision attention mask
         if pixel_attention_mask is None:
             pixel_attention_mask = torch.ones(
                 size=[pixel_values.shape[i] for i in (0, 2, 3)],
@@ -131,13 +137,12 @@ class Llama3Siglip2Transformer(Llama3):
             pixel_attention_mask = pixel_attention_mask.view(batch_size * num_images, *pixel_attention_mask.shape[2:])
             pixel_attention_mask = pixel_attention_mask[real_images_inds].contiguous()
 
-        patch_size = 16
         patches_subgrid = pixel_attention_mask.unfold(dimension=1, size=patch_size, step=patch_size)
         patches_subgrid = patches_subgrid.unfold(dimension=2, size=patch_size, step=patch_size)
         patch_attention_mask = (patches_subgrid.sum(dim=(-1, -2)) > 0).bool()
 
         image_hidden_states = self.encoder(pixel_values, patch_attention_mask)
-        #image_hidden_states = image_hidden_states.last_hidden_state
+        print('v', image_hidden_states)
         image_hidden_states = image_hidden_states.bfloat16()
 
         image_hidden_states = self.projector(image_hidden_states)
@@ -146,30 +151,33 @@ class Llama3Siglip2Transformer(Llama3):
     def forward(
             self,
             input_ids: torch.Tensor,
-            eos_id: int | None = None,
-            input_batch: torch.Tensor | None = None,
             pixel_values: torch.Tensor | None = None,
             patch_attention_mask: torch.BoolTensor | None = None,
-            #grid_thw: torch.Tensor | None = None,
+            attention_masks: AttentionMasksType | None = None,
             ):
-        if self.model_args.use_flex_attn:
-            init_attention_mask(
-                    input_batch if input_batch is not None else input_ids, eos_id=self.eos_id
-                    )
 
-        # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
         if self.encoder is not None and pixel_values is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
+            print('v2', vision_tokens)
             hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
 
+        print('h', hidden_states)
+
+        is_first_layer = True
         for layer in self.layers.values():
-            hidden_states = layer(hidden_states, self.freqs_cis)
+            hidden_states = layer(hidden_states, self.freqs_cis, attention_masks=attention_masks)
+            
+            if is_first_layer:
+                print('d1', hidden_states)
+                is_first_layer = False 
+
+        print('d29', hidden_states)
 
         hidden_states = self.norm(hidden_states)
-        output = self.output(hidden_states)
-        return output
+        logits = self.output(hidden_states)
+        return logits
 
 if __name__ == "__main__":
 
@@ -201,6 +209,8 @@ if __name__ == "__main__":
                 n_heads=9,
                 n_kv_heads=3,
                 ffn_dim=1536,
+                use_flex_attn = False,
+                attn_mask_type = "causal",
                 ),
             }
 

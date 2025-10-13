@@ -9,13 +9,14 @@ from torchtitan.components.lr_scheduler import build_lr_schedulers
 from torchtitan.components.optimizer import build_optimizers
 from torchtitan.components.tokenizer import build_hf_tokenizer
 from torchtitan.components.validate import build_validator
-from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
+from torchtitan.protocols.train_spec import TrainSpec
 
 from .datasets.mm_datasets import build_mm_dataloader
 from .infra.parallelize import parallelize_vlm
 # from .infra.pipeline import pipeline_llama
 from .model.args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .model.model import Llama3Siglip2Transformer
+from .model.state_dict_adapter import SmolVLMStateDictAdapter
 
 __all__ = [
     "parallelize_vlm",
@@ -35,7 +36,7 @@ siglip2_configs = {
     ),
     "256M": Siglip2ModelArgs(
         dim=768,
-        ffn_dim=2304,
+        ffn_dim=3072,
         n_layers=12,
         n_heads=12,
     )
@@ -63,20 +64,21 @@ llama3_siglip2_configs = {
     "256M": Llama3Siglip2ModelArgs(
         encoder=siglip2_configs["256M"],
         dim=576,
+        ffn_dim=1536,
         n_layers=30,
         n_heads=9,
         n_kv_heads=3,
-        ffn_dim_multiplier=1.3,
         multiple_of=1024,
         rope_theta=100000,
         vocab_size=49280,
+        use_flex_attn = False,
+        attn_mask_type = "causal",
     ),
 }
 
 
-register_train_spec(
-    TrainSpec(
-        name="llama3-siglip2",
+def get_train_spec() -> TrainSpec:
+    return TrainSpec(
         model_cls=Llama3Siglip2Transformer,
         model_args=llama3_siglip2_configs,
         parallelize_fn=parallelize_vlm,
@@ -87,6 +89,5 @@ register_train_spec(
         build_tokenizer_fn=build_hf_tokenizer,
         build_loss_fn=build_cross_entropy_loss,
         build_validator_fn=build_validator,
-        # state_dict_adapter=Llama3StateDictAdapter,
+        state_dict_adapter=SmolVLMStateDictAdapter,
     )
-)

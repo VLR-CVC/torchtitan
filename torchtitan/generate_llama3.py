@@ -8,75 +8,178 @@ import importlib
 import os
 import time
 from typing import Optional, List, Dict, Any
-import numpy as np
 
 import torch
 from torch.distributed.elastic.multiprocessing.errors import record
-from transformers import AutoProcessor
 
 import torchtitan.protocols.train_spec as train_spec_module
 from torchtitan.components.checkpoint import CheckpointManager
-from torchtitan.components.tokenizer import HuggingFaceTokenizer
 from torchtitan.config import ConfigManager, JobConfig, TORCH_DTYPE_MAP
 from torchtitan.distributed import ParallelDims, utils as dist_utils
 from torchtitan.protocols.model_converter import build_model_converters
 from torchtitan.tools import utils
 from torchtitan.tools.logging import init_logger, logger
 
+# --- Generation utilities from scripts/generate/_generation.py ---
+
+def multinomial_sample_one(
+    probs: torch.Tensor, rng: Optional[torch.Generator] = None
+) -> torch.Tensor:
+    q = torch.empty_like(probs).exponential_(1, generator=rng)
+    return torch.argmax(probs / q, dim=-1, keepdim=True).to(dtype=torch.long)
+
+
+def logits_to_probs(
+    logits: torch.Tensor,
+    temperature: float = 1.0,
+    top_k: Optional[int] = None,
+) -> torch.Tensor:
+    logits = logits / max(temperature, 1e-5)
+
+    if top_k is not None:
+        v, _ = torch.topk(logits, k=min(top_k, logits.size(-1)))
+        pivot = v.select(dim=-1, index=-1).unsqueeze(-1)
+        logits = torch.where(logits < pivot, -float("Inf"), logits)
+
+    probs = torch.nn.functional.softmax(logits, dim=-1)
+    return probs
+
+
+def generate_next_token(
+    model,
+    x: torch.Tensor,
+    *,
+    temperature: float = 1.0,
+    top_k: Optional[int] = None,
+    rng: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    # The model forward pass in torchtitan expects a `tokens` argument.
+    logits = model(tokens=x)
+    probs = logits_to_probs(logits[:, -1, :], temperature, top_k)
+    next_token = multinomial_sample_one(probs, rng=rng)
+    return next_token
+
+
+@torch.no_grad()
+def _generate_sequence(
+    model,
+    input_ids: torch.Tensor,
+    *,
+    max_new_tokens: int,
+    temperature: float = 1.0,
+    top_k: Optional[int] = None,
+    seed: Optional[int] = None,
+) -> torch.Tensor:
+    # ensure batch dimension (T,) --> (B, T)
+    if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+
+    rng = None
+    if seed is not None:
+        rng = torch.Generator(input_ids.device).manual_seed(seed)
+
+    generated_tokens = input_ids.clone()
+
+    for _ in range(max_new_tokens):
+        next_token = generate_next_token(
+            model,
+            x=generated_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            rng=rng,
+        )
+
+        generated_tokens = torch.cat([generated_tokens, next_token], dim=1)
+
+    return generated_tokens
+
+# --- End of generation utilities ---
+
 
 class Generator:
-    """Generator class for SmolVLM model inference."""
-    
+    """Generator class for Llama3 model inference."""
+
     def __init__(self, job_config: JobConfig):
         torch._C._log_api_usage_once("torchtitan.generate")
-        
+
         self.job_config = job_config
-        
+
         logger.info(f"Starting generation: {job_config.job.description}")
-        
+
         if job_config.experimental.custom_import:
             importlib.import_module(job_config.experimental.custom_import)
-        
+
         if job_config.job.print_args:
             logger.info(f"Running with args: {job_config.to_dict()}")
-        
+
         device_module, device_type = utils.device_module, utils.device_type
         self.device = torch.device(f"{device_type}:{int(os.environ.get('LOCAL_RANK', 0))}")
         device_module.set_device(self.device)
-        
-        self.train_spec = train_spec_module.get_train_spec(job_config.model.name)
-        
-        # Build tokenizer
-        self.tokenizer = (
-            self.train_spec.build_tokenizer_fn(job_config)
-            if self.train_spec.build_tokenizer_fn is not None
-            else None
+
+        # For generation, we usually use a single process or TP.
+        # We will not initialize the full distributed setup unless necessary.
+        world_size = int(os.environ.get("WORLD_SIZE", 1))
+        if world_size > 1:
+            dist_utils.init_distributed(
+                job_config.comm,
+                enable_cpu_backend=False,
+                base_folder=job_config.job.dump_folder,
+            )
+
+        parallelism_config = job_config.parallelism
+        self.parallel_dims = ParallelDims(
+            dp_shard=parallelism_config.data_parallel_shard_degree,
+            dp_replicate=parallelism_config.data_parallel_replicate_degree,
+            cp=parallelism_config.context_parallel_degree,
+            tp=parallelism_config.tensor_parallel_degree,
+            pp=parallelism_config.pipeline_parallel_degree,
+            ep=parallelism_config.expert_parallel_degree,
+            etp=parallelism_config.expert_tensor_parallel_degree,
+            world_size=world_size,
         )
-        
-        # Build model
+
+        dist_utils.set_determinism(
+            self.parallel_dims.world_mesh if world_size > 1 else None,
+            self.device,
+            job_config.training.seed,
+            deterministic=False,
+        )
+
+        self.train_spec = train_spec_module.get_train_spec(job_config.model.name)
+
+        self.tokenizer = self.train_spec.build_tokenizer_fn(job_config)
+
         model_args = self.train_spec.model_args[job_config.model.flavor]
         model_args.update_from_config(job_config)
         self.model_args = model_args
-        
+
         with (
             torch.device("meta"),
             utils.set_default_dtype(TORCH_DTYPE_MAP[job_config.training.dtype]),
         ):
             model = self.train_spec.model_cls(model_args)
-        
-        with torch.no_grad():
+
+        model_converters = build_model_converters(job_config, self.parallel_dims)
+        model_converters.convert(model)
+
+        if self.parallel_dims.pp_enabled:
+            raise NotImplementedError("Pipeline parallelism not supported for generation")
+        else:
+            model = self.train_spec.parallelize_fn(model, self.parallel_dims, job_config)
+
             init_device = self.device.type
             model.to_empty(device=init_device)
+            with torch.no_grad():
+                model.init_weights()
             model.eval()
-            
+
             self.model_parts = [model]
-        
-        # Setup checkpoint manager for loading
+
         self.checkpointer = CheckpointManager(
-            dataloader=None,  # No dataloader needed for generation
+            dataloader=None,
             model_parts=self.model_parts,
-            optimizers=None,  # No optimizer needed for generation
-            lr_schedulers=None,  # No lr_scheduler needed for generation
+            optimizers=None,
+            lr_schedulers=None,
             states={},
             checkpoint_config=job_config.checkpoint,
             sd_adapter=(
@@ -87,254 +190,57 @@ class Generator:
                 else None
             ),
             base_folder=job_config.job.dump_folder,
-            ft_manager=None,  # No fault tolerance for generation
+            ft_manager=None,
         )
-        
-        # Load checkpoint
+
         self.checkpointer.load(step=job_config.checkpoint.load_step)
         logger.info(f"Loaded checkpoint from step {job_config.checkpoint.load_step}")
-        
-        self.processor = AutoProcessor.from_pretrained(job_config.model.hf_assets_path)
 
-        # Load chat template
-        template_path = "torchtitan/vlr/smolvlm/datasets/template.jinja"
-        if os.path.exists(template_path):
-            with open(template_path, 'r') as f:
-                self.chat_template = f.read()
-        else:
-            logger.warning(f"Chat template not found at {template_path}, using default")
-            self.chat_template = None
-        
-        # Setup generation parameters
         self.max_new_tokens = getattr(job_config, 'max_new_tokens', 256)
         self.temperature = getattr(job_config, 'temperature', 0.7)
-        self.top_p = getattr(job_config, 'top_p', 0.9)
         self.top_k = getattr(job_config, 'top_k', 50)
-        
+
         logger.info("Generator initialized successfully")
-    
+
     @torch.no_grad()
     def generate(
         self,
-        messages: List[Dict[str, Any]],
+        prompts: List[str],
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
         top_k: Optional[int] = None,
-        do_sample: bool = True,
-    ) -> str:
-        """Generate text from messages.
-        
-        Args:
-            messages: List of message dictionaries with 'role' and 'content'
-            max_new_tokens: Maximum number of tokens to generate
-            temperature: Sampling temperature
-            top_p: Top-p sampling parameter
-            top_k: Top-k sampling parameter
-            do_sample: Whether to use sampling or greedy decoding
-        
-        Returns:
-            Generated text string
-        """
+        seed: Optional[int] = None,
+    ) -> List[str]:
         max_new_tokens = max_new_tokens or self.max_new_tokens
         temperature = temperature or self.temperature
-        top_p = top_p or self.top_p
         top_k = top_k or self.top_k
-        
+
         model = self.model_parts[0]
         model.eval()
-        
-        # Tokenize input
-        if self.chat_template:
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                chat_template=self.chat_template,
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
-        else:
-            # Fallback to default chat template
-            input_ids = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
-        
-        if isinstance(input_ids, dict):
-            input_ids = input_ids["input_ids"]
-        
-        input_ids = input_ids.to(self.device)
-        
-        # Setup generation context (compile if enabled)
-        generate_fn = self._generate_tokens
-        if self.job_config.compile.enable and "model" in self.job_config.compile.components:
-            logger.info('Compiling model...')
-            generate_fn = torch.compile(generate_fn, mode="reduce-overhead")
-        
-        # Generate tokens
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            output_ids = generate_fn(
-                model=model,
-                input_ids=input_ids,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-            )
-        
-        # Decode output
-        generated_ids = output_ids[0, input_ids.shape[1]:]
-        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-        
-        return generated_text
-    
-    def _generate_tokens(
-        self,
-        model: torch.nn.Module,
-        input_ids: torch.Tensor,
-        max_new_tokens: int,
-        temperature: float,
-        top_p: float,
-        top_k: int,
-        do_sample: bool,
-    ) -> torch.Tensor:
-        """Core generation loop."""
-        
-        batch_size = input_ids.shape[0]
-        generated_ids = input_ids.clone()
-        
-        # Cache for key-value pairs (if using KV cache in the future)
-        past_key_values = None
-        
-        for _ in range(max_new_tokens):
-            # Forward pass
-            with torch.no_grad():
-                # Prepare input dict
-                input_dict = {
-                    "tokens": generated_ids,
-                }
-                
-                # Get model output
-                logits = model(**input_dict)
-                
-                # Get next token logits
-                next_token_logits = logits[:, -1, :]
-                
-                # Apply temperature
-                if temperature > 0:
-                    next_token_logits = next_token_logits / temperature
-                
-                # Sample or greedy decode
-                if False:
-                    # Apply top-k filtering
-                    if top_k > 0:
-                        indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
-                        next_token_logits[indices_to_remove] = -float('inf')
-                    
-                    # Apply top-p filtering
-                    if top_p < 1.0:
-                        sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                        
-                        # Remove tokens with cumulative probability above the threshold
-                        sorted_indices_to_remove = cumulative_probs > top_p
-                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                        sorted_indices_to_remove[..., 0] = 0
-                        
-                        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                        next_token_logits[indices_to_remove] = -float('inf')
-                    
-                    # Sample
-                    probs = torch.softmax(next_token_logits, dim=-1)
-                    next_token = torch.multinomial(probs, num_samples=1)
-                else:
-                    # Greedy decoding
-                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-                
-                # Append to generated sequence
-                generated_ids = torch.cat([generated_ids, next_token], dim=1)
-                
-                # Check for EOS token
-                if (next_token == self.tokenizer.eos_token):
-                    break
-        
-        return generated_ids
-    
-    def interactive_generate(self):
-        """Interactive generation mode for testing."""
-        logger.info("Starting interactive generation mode. Type 'quit' to exit.")
-        
-        while True:
-            try:
-                user_input = input("\nEnter your prompt (or 'quit' to exit): ").strip()
-                
-                if user_input.lower() == 'quit':
-                    break
-                
-                
-                # Create message format
-                messages = [
-                    {
-                        "user": user_input,
-                        "assistant": ""  # Will be filled by generation
-                    }
-                ]
-                
-                logger.info("Generating response...")
-                start_time = time.perf_counter()
-                
-                response = self.generate(messages)
-                
-                generation_time = time.perf_counter() - start_time
-                logger.info(f"Generation completed in {generation_time:.2f}s")
-                
-                print(f"\nGenerated response:\n{response}")
-                
-            except KeyboardInterrupt:
-                logger.info("\nInterrupted by user")
-                break
-            except Exception as e:
-                logger.error(f"Error during generation: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    def batch_generate(self, input_file: str, output_file: str):
-        """Generate responses for a batch of inputs from a file.
-        
-        Args:
-            input_file: Path to JSON file with inputs
-            output_file: Path to save outputs
-        """
-        import json
-        
-        logger.info(f"Loading inputs from {input_file}")
-        
-        with open(input_file, 'r') as f:
-            inputs = json.load(f)
-        
-        results = []
-        for i, item in enumerate(inputs):
-            logger.info(f"Processing item {i+1}/{len(inputs)}")
-            
-            messages = item.get('messages', [])
-            
-            # Generate response
-            response = self.generate(messages)
-            
-            results.append({
-                'input': item,
-                'output': response
-            })
-        
-        # Save results
-        with open(output_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        
-        logger.info(f"Results saved to {output_file}")
-    
+
+        # For simplicity, this example handles one prompt at a time.
+        # Batching can be added for efficiency.
+        generated_texts = []
+        for prompt in prompts:
+            input_ids = self.tokenizer.encode(prompt, add_bos=True, add_eos=False)
+            input_ids = torch.tensor(input_ids, dtype=torch.long, device=self.device)
+
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                output_ids = _generate_sequence(
+                    model=model,
+                    input_ids=input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_k=top_k,
+                    seed=seed,
+                )
+
+            generated_ids = output_ids[0, input_ids.shape[0]:]
+            generated_text = self.tokenizer.decode(generated_ids.tolist(), skip_special_tokens=True)
+            generated_texts.append(generated_text)
+
+        return generated_texts
+
     def close(self):
         """Cleanup resources."""
         if hasattr(self, 'checkpointer'):
@@ -346,36 +252,35 @@ class Generator:
 def main():
     """Main entry point for generation."""
     init_logger()
-    
+
     # Parse configuration
     config_manager = ConfigManager()
     config = config_manager.parse_args()
-    
+
     generator = None
     try:
         # Initialize generator
         generator = Generator(config)
-        
-        # Check for generation mode from config or command line
-        generation_mode = getattr(config, 'generation_mode', 'interactive')
-        
-        if generation_mode == 'interactive':
-            generator.interactive_generate()
-        elif generation_mode == 'batch':
-            input_file = getattr(config, 'input_file', 'inputs.json')
-            output_file = getattr(config, 'output_file', 'outputs.json')
-            generator.batch_generate(input_file, output_file)
-        else:
-            # Single generation example
-            messages = [
-                {
-                    "user": "What is the capital of France?",
-                    "assistant": ""
-                }
-            ]
-            response = generator.generate(messages)
-            logger.info(f"Generated: {response}")
-    
+
+        prompts = [
+            "What is the meaning of life?",
+            "Translate 'hello world' to French.",
+        ]
+
+        logger.info(f"Generating for prompts: {prompts}")
+        start_time = time.perf_counter()
+
+        responses = generator.generate(prompts)
+
+        generation_time = time.perf_counter() - start_time
+        logger.info(f"Generation completed in {generation_time:.2f}s")
+
+        for prompt, response in zip(prompts, responses):
+            print("-" * 20)
+            print(f"Prompt: {prompt}")
+            print(f"Response: {response}")
+            print("-" * 20)
+
     except Exception as e:
         logger.error(f"Error during generation: {e}")
         if generator:
@@ -384,7 +289,8 @@ def main():
     else:
         if generator:
             generator.close()
-        torch.distributed.destroy_process_group()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
         logger.info("Process group destroyed")
 
 

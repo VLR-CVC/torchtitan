@@ -174,11 +174,7 @@ class Attention(nn.Module):
     def __init__(self, model_args: TransformerModelArgs):
         super().__init__()
         self.n_heads = model_args.n_heads
-        self.n_kv_heads = (
-            model_args.n_heads
-            if model_args.n_kv_heads is None
-            else model_args.n_kv_heads
-        )
+        self.n_kv_heads = model_args.n_kv_heads
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = model_args.dim // model_args.n_heads
 

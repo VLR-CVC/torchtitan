@@ -8,6 +8,7 @@ import einops as E
 import torch
 from torch import nn
 
+from torchtitan.protocols.model import AttentionMasksType
 from torchtitan.models.attention import ScaledDotProductAttentionWrapper
 from torchtitan.models.llama3 import Transformer as Llama3
 
@@ -50,8 +51,6 @@ class Projector(nn.Module):
         return x
 
     def forward(self, image_hidden_states):
-        print("image hidden")
-        print(image_hidden_states)
         image_hidden_states = self.pixel_shuffle(image_hidden_states, self.scale_factor)
         image_hidden_states = self.modality_projection(image_hidden_states)
         return image_hidden_states
@@ -142,7 +141,6 @@ class Llama3Siglip2Transformer(Llama3):
         patch_attention_mask = (patches_subgrid.sum(dim=(-1, -2)) > 0).bool()
 
         image_hidden_states = self.encoder(pixel_values, patch_attention_mask)
-        #image_hidden_states = image_hidden_states.last_hidden_state
         image_hidden_states = image_hidden_states.bfloat16()
 
         image_hidden_states = self.projector(image_hidden_states)
@@ -151,26 +149,19 @@ class Llama3Siglip2Transformer(Llama3):
     def forward(
             self,
             input_ids: torch.Tensor,
-            eos_id: int | None = None,
-            input_batch: torch.Tensor | None = None,
             pixel_values: torch.Tensor | None = None,
             patch_attention_mask: torch.BoolTensor | None = None,
-            #grid_thw: torch.Tensor | None = None,
+            attention_masks: AttentionMasksType | None = None,
             ):
 
-        # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids
 
-        """
         if self.encoder is not None and pixel_values is not None:
             vision_tokens = self.get_image_features(pixel_values, patch_attention_mask)
             hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
-        else:
-            "THERE are not images"
-        """
 
         for layer in self.layers.values():
-            hidden_states = layer(hidden_states, self.freqs_cis)
+            hidden_states = layer(hidden_states, self.freqs_cis, attention_masks=attention_masks)
 
         hidden_states = self.norm(hidden_states)
         output = self.output(hidden_states)

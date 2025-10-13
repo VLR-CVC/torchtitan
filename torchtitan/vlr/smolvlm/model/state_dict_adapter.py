@@ -37,9 +37,9 @@ class SmolVLMStateDictAdapter(StateDictAdapter):
 
             #"model.layers.{}.self_attn.rotary_emb.inv_freq": None,
 
-            "model.text_model.layers.{}.mlp.gate_proj.weight": "layers.{}.feed_forward.gate_proj.weight", # check
-            "model.text_model.layers.{}.mlp.up_proj.weight": "layers.{}.feed_forward.up_proj.weight", # check
-            "model.text_model.layers.{}.mlp.down_proj.weight": "layers.{}.feed_forward.down_proj.weight", # check
+            "model.text_model.layers.{}.mlp.gate_proj.weight": "layers.{}.feed_forward.w1.weight", # check
+            "model.text_model.layers.{}.mlp.up_proj.weight": "layers.{}.feed_forward.w3.weight", # check
+            "model.text_model.layers.{}.mlp.down_proj.weight": "layers.{}.feed_forward.w2.weight", # check
 
             "model.text_model.layers.{}.input_layernorm.weight": "layers.{}.attention_norm.weight", # check
             "model.text_model.layers.{}.post_attention_layernorm.weight": "layers.{}.ffn_norm.weight", # check

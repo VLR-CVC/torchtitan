@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any
 import numpy as np
 
 import torch
+torch.set_printoptions(threshold=10_000)
 from torch.distributed.elastic.multiprocessing.errors import record
 from transformers import AutoProcessor
 from PIL import Image
@@ -71,12 +72,12 @@ def generate_next_token(
 def _generate_sequence(
     model,
     input_ids: torch.Tensor,
-    *,
     max_new_tokens: int,
     temperature: float = 1.0,
+    pixel_values: torch.Tensor | None = None,
+    patch_attention_mask: torch.BoolTensor | None = None,
     top_k: Optional[int] = None,
     seed: Optional[int] = None,
-    **model_kwargs,
 ) -> torch.Tensor:
     # ensure batch dimension (T,) --> (B, T)
     if input_ids.ndim == 1:
@@ -95,7 +96,8 @@ def _generate_sequence(
             temperature=temperature,
             top_k=top_k,
             rng=rng,
-            **model_kwargs,
+            pixel_values=pixel_values,
+            patch_attention_mask=patch_attention_mask,
         )
 
         generated_tokens = torch.cat([generated_tokens, next_token], dim=1)
@@ -214,9 +216,9 @@ class Generator:
             logger.warning(f"Chat template not found at {template_path}, using default")
             self.chat_template = None
 
-        self.max_new_tokens = getattr(job_config, 'max_new_tokens', 256)
-        self.temperature = getattr(job_config, 'temperature', 0.7)
-        self.top_k = getattr(job_config, 'top_k', 50)
+        self.max_new_tokens = getattr(job_config, 'max_new_tokens', 16)
+        self.temperature = getattr(job_config, 'temperature', 0)
+        self.top_k = getattr(job_config, 'top_k', None)
 
         logger.info("Generator initialized successfully")
 
@@ -247,6 +249,7 @@ class Generator:
             if 'pixel_attention_mask' in vision_inputs:
                 patch_attention_mask = vision_inputs['pixel_attention_mask'].to(self.device)
 
+        """
         if self.chat_template:
             input_ids = self.tokenizer.apply_chat_template(
                 messages,
@@ -267,26 +270,56 @@ class Generator:
             input_ids = input_ids["input_ids"]
 
         input_ids = input_ids.to(self.device)
+        """
 
-        model_kwargs = {
-            "pixel_values": pixel_values,
-            "patch_attention_mask": patch_attention_mask,
-            "eos_id": self.tokenizer.eos_token_id,
-        }
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": messages},
+                    #{"type": "image", "image": "/home-local/tockier/cat.jpg"}
+                ]
+            },
+        ]
+
+        inputs = self.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
+        print(inputs)
+
+        inputs = self.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(self.device, dtype=torch.bfloat16)
+
+        input_ids = inputs['input_ids']
+        pixel_values = inputs.get('pixel_values', None)
+        patch_attention_mask = inputs.get('patch_attention_mask', None)
+
+        print(inputs)
 
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             output_ids = _generate_sequence(
                 model=model,
                 input_ids=input_ids,
-                max_new_tokens=max_new_tokens,
+                pixel_values=pixel_values,
+                patch_attention_mask=patch_attention_mask,
+                max_new_tokens=64,
                 temperature=temperature,
                 top_k=top_k,
                 seed=seed,
-                **model_kwargs,
             )
 
-        generated_ids = output_ids[0, input_ids.shape[1]:]
-        generated_text = self.tokenizer.decode(generated_ids.tolist(), skip_special_tokens=True)
+        print(output_ids.v)
+        generated_text = self.processor.batch_decode(output_ids, skip_special_tokens=True)
 
         return generated_text
 
@@ -311,17 +344,16 @@ class Generator:
                 elif image_path:
                     logger.warning(f"Image path {image_path} not found, proceeding without image")
 
-                messages = [{"role": "user", "content": user_input}]
+                messages = [{ "user": user_input, "assistant": ""}]
 
                 logger.info("Generating response...")
                 start_time = time.perf_counter()
 
-                response = self.generate(messages, images=images)
+                response = self.generate(user_input, images=images)
+
+                print(response)
 
                 generation_time = time.perf_counter() - start_time
-                logger.info(f"Generation completed in {generation_time:.2f}s")
-
-                print(f"\nGenerated response:\n{response}")
 
             except KeyboardInterrupt:
                 logger.info("\nInterrupted by user")

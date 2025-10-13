@@ -1,2 +1,2 @@
-{%- for message in messages %}{{'<image><|im_start|>user' + '\\n' + message['user'] + '<|im_end|>' }}
-{{'<|im_start|>assistant' + '\\n' + message['assistant'] + '<|im_end|>' }}{%- endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}
+{%- for message in messages %}{{'<image><|im_start|>user' + message['user'] + '<image>' + '<end_of_utterance>' }}
+{%- endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}

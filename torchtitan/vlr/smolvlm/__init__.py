@@ -67,6 +67,7 @@ llama3_siglip2_configs = {
         ffn_dim=1536,
         n_layers=30,
         n_heads=9,
+        n_kv_heads=3,
         multiple_of=1024,
         rope_theta=100000,
         vocab_size=49280,

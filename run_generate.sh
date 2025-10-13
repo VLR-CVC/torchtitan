@@ -16,7 +16,6 @@ CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/vlr/smolvlm/train_configs/llama_siglip_
 INFERENCE_FILE=${INFERENCE_FILE:-"torchtitan.generate"}
 
 
-CUDA_VISIBLE_DEVICES=2 \
 NCCL_P2P_DISABLE=1 \
 TORCH_NCCL_DUMP_ON_TIMEOUT=1 \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \

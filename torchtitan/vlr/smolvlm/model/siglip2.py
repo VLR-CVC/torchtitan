@@ -63,8 +63,17 @@ class SmolVLMVisionEmbeddings(nn.Module):
             nb_patches_h = p_attn_mask[:, 0].sum()
             nb_patches_w = p_attn_mask[0].sum()
 
+            step_h = 1.0 / nb_patches_h
+            step_w = 1.0 / nb_patches_w
+
             h_indices = torch.arange(nb_patches_h, device=position_ids.device, dtype=pixel_values.dtype)
             w_indices = torch.arange(nb_patches_w, device=position_ids.device, dtype=pixel_values.dtype)
+
+            fractional_coords_h = h_indices * step_h
+            fractional_coords_w = w_indices * step_w
+
+            fractional_coords_h = torch.clamp(fractional_coords_h, max=(1.0 - 1e-6))
+            fractional_coords_w = torch.clamp(fractional_coords_w, max=(1.0 - 1e-6))
 
             fractional_coords_h = h_indices / nb_patches_h * (1 - 1e-6)
             fractional_coords_w = w_indices / nb_patches_w * (1 - 1e-6)
@@ -77,6 +86,30 @@ class SmolVLMVisionEmbeddings(nn.Module):
 
         embeddings = embeddings + self.position_embedding(position_ids)
         return embeddings
+
+
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor,
+    scaling: float,
+    dropout: float = 0.0,
+):
+    attn_weights = torch.matmul(query, key.transpose(-1, -2)) * scaling
+    """
+    if attention_mask is not None:
+        attn_weights = attn_weights + attention_mask
+    """
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+
+    attn_output = torch.matmul(attn_weights, value)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output
 
 
 class Attention(nn.Module):
@@ -100,26 +133,31 @@ class Attention(nn.Module):
         super().__init__()
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
+        self.num_heads = args.n_heads
+
+        self.scale = self.head_dim**-.5
 
         self.q_proj = nn.Linear(self.dim, self.dim)
         self.k_proj = nn.Linear(self.dim, self.dim)
         self.v_proj = nn.Linear(self.dim, self.dim)
         self.out_proj = nn.Linear(self.dim, self.dim)
 
-        self.attn = ScaledDotProductAttentionWrapper()
+        self.attn = ScaledDotProductAttentionWrapper(is_causal=False)
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
-        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor):
+        batch_size, seq_length, embed_dim = hidden_states.shape
 
-        # Use self.head_dim instead of `n_heads` to infer the actual
-        # local heads from sizes of xq, xk, and xv as TP may have sharded them
-        # after the above linear ops.
-        xq = E.rearrange(xq, "b l (h d) -> b h l d", d=self.head_dim)
-        xk = E.rearrange(xk, "b l (h d) -> b h l d", d=self.head_dim)
-        xv = E.rearrange(xv, "b l (h d) -> b h l d", d=self.head_dim)
+        queries = self.q_proj(hidden_states)
+        keys = self.k_proj(hidden_states)
+        values = self.v_proj(hidden_states)
 
-        output = self.attn(xq, xk, xv)
-        output = E.rearrange(output, "b h l d -> b l (h d)").contiguous()
+        queries = queries.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+        keys = keys.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+        values = values.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)
+
+        output = eager_attention_forward(self, queries, keys, values, attention_mask, self.scale)
+
+        output = output.reshape(batch_size, seq_length, embed_dim).contiguous()
 
         return self.out_proj(output)
 
@@ -135,8 +173,8 @@ class PytorchGELUTanh(nn.Module):
 class FeedForward(nn.Module):
     def __init__(self, args: Siglip2ModelArgs):
         super().__init__()
-        self.fc1 = nn.Linear(args.dim, args.ffn_dim, bias=True)
-        self.fc2 = nn.Linear(args.ffn_dim, args.dim, bias=True)
+        self.fc1 = nn.Linear(args.dim, args.ffn_dim)
+        self.fc2 = nn.Linear(args.ffn_dim, args.dim)
         self.act_fn  = PytorchGELUTanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -158,10 +196,22 @@ class TransformerLayer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(args.dim, eps=args.layer_norm_eps)
         self.mlp = FeedForward(args)
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        x = x + self.self_attn(self.layer_norm1(x), attention_mask=attention_mask)
-        x = x + self.mlp(self.layer_norm2(x))
-        return x
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        residual = hidden_states
+
+        hidden_states = self.layer_norm1(hidden_states)
+        hidden_states = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+        )
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        hidden_states = self.layer_norm2(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        return hidden_states
 
     def init_weights(self):
         self.layer_norm1.reset_parameters()

@@ -83,7 +83,7 @@ class ScaledDotProductAttentionWrapper(torch.nn.Module):
     # TODO: remove sdpa_backends after PyTorch 2.9 is released.
     sdpa_backends: ClassVar[list[SDPBackend]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, is_causal) -> None:
         super().__init__()
         if not self.sdpa_backends:
             self.sdpa_backends = [
@@ -91,6 +91,7 @@ class ScaledDotProductAttentionWrapper(torch.nn.Module):
                 SDPBackend.FLASH_ATTENTION,
                 SDPBackend.EFFICIENT_ATTENTION,
             ]
+        self.is_causal = is_causal
 
     def forward(
         self,
@@ -101,7 +102,7 @@ class ScaledDotProductAttentionWrapper(torch.nn.Module):
         scale: float | None = None,
     ) -> torch.Tensor:
         with sdpa_kernel(self.sdpa_backends, set_priority=True):
-            return F.scaled_dot_product_attention(q, k, v, scale=scale, is_causal=True)
+            return F.scaled_dot_product_attention(q, k, v, scale=scale, is_causal=self.is_causal)
 
 
 # We cannot do inner function/closure because we won't be able to cache it --

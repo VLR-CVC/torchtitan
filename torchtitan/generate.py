@@ -225,7 +225,7 @@ class Generator:
     @torch.no_grad()
     def generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: List[Dict[str, Any]] = None,
         images: Optional[List[Image.Image]] = None,
         max_new_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
@@ -277,10 +277,21 @@ class Generator:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": messages},
-                    #{"type": "image", "image": "/home-local/tockier/cat.jpg"}
+                    {"type": "image", "image": images},
                 ]
             },
         ]
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Caption this image"},
+                    {"type": "image", "image": "../cat.jpg"},
+                ]
+            },
+        ]
+
 
         inputs = self.processor.apply_chat_template(
             messages,
@@ -289,8 +300,6 @@ class Generator:
             return_dict=True,
             return_tensors="pt",
         )
-
-        print(inputs)
 
         inputs = self.processor.apply_chat_template(
             messages,
@@ -302,10 +311,19 @@ class Generator:
 
         input_ids = inputs['input_ids']
         pixel_values = inputs.get('pixel_values', None)
-        patch_attention_mask = inputs.get('patch_attention_mask', None)
+        patch_attention_mask = inputs.get('pixel_attention_mask', None)
 
-        print(inputs)
 
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            logits = model(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                patch_attention_mask=patch_attention_mask,
+            )
+
+        print(logits)
+
+        """
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             output_ids = _generate_sequence(
                 model=model,
@@ -321,7 +339,8 @@ class Generator:
         print(output_ids.v)
         generated_text = self.processor.batch_decode(output_ids, skip_special_tokens=True)
 
-        return generated_text
+        print(generated_text)
+        """
 
     def interactive_generate(self):
         """Interactive generation mode for testing."""
@@ -339,19 +358,14 @@ class Generator:
                 images = None
                 if image_path and os.path.exists(image_path):
                     image = Image.open(image_path).convert('RGB')
-                    images = [image]
                     logger.info(f"Loaded image from {image_path}")
                 elif image_path:
                     logger.warning(f"Image path {image_path} not found, proceeding without image")
 
-                messages = [{ "user": user_input, "assistant": ""}]
-
                 logger.info("Generating response...")
                 start_time = time.perf_counter()
 
-                response = self.generate(user_input, images=images)
-
-                print(response)
+                response = self.generate(user_input, images=image)
 
                 generation_time = time.perf_counter() - start_time
 
@@ -381,7 +395,7 @@ def main():
     generator = None
     try:
         generator = Generator(config)
-        generator.interactive_generate()
+        generator.generate()
 
     except Exception as e:
         logger.error(f"Error during generation: {e}")

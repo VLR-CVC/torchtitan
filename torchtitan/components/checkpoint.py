@@ -339,7 +339,7 @@ class CheckpointManager:
             checkpoint_id (str): The checkpoint id to save.
             async_mode (AsyncMode): Whether the checkpoint is async.
             enable_garbage_collection (bool): Whether to enable garbage collection after save.
-            to_hf (bool): Whether to save in HF model definition and safetensors format.
+            to_hf (bool): Whether to save in HF mel definition and safetensors format.
 
         Returns:
             Future: The future object if the checkpoint is async, otherwise None.

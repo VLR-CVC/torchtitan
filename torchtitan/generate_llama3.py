@@ -44,36 +44,6 @@ class Generator:
         self.device = torch.device(f"{device_type}:{int(os.environ.get('LOCAL_RANK', 0))}")
         device_module.set_device(self.device)
         
-        # Initialize distributed
-        dist_utils.init_distributed(
-            job_config.comm,
-            enable_cpu_backend=False,
-            base_folder=job_config.job.dump_folder,
-        )
-        
-        world_size = int(os.environ.get("WORLD_SIZE", 1))
-        parallelism_config = job_config.parallelism
-        self.parallel_dims = parallel_dims = ParallelDims(
-            dp_shard=parallelism_config.data_parallel_shard_degree,
-            dp_replicate=parallelism_config.data_parallel_replicate_degree,
-            cp=parallelism_config.context_parallel_degree,
-            tp=parallelism_config.tensor_parallel_degree,
-            pp=parallelism_config.pipeline_parallel_degree,
-            ep=parallelism_config.expert_parallel_degree,
-            etp=parallelism_config.expert_tensor_parallel_degree,
-            world_size=world_size,
-        )
-        
-        world_mesh = parallel_dims.world_mesh
-        
-        # Set random seed
-        dist_utils.set_determinism(
-            world_mesh,
-            self.device,
-            job_config.training.seed,
-            deterministic=False,
-        )
-        
         self.train_spec = train_spec_module.get_train_spec(job_config.model.name)
         
         # Build tokenizer
@@ -88,31 +58,15 @@ class Generator:
         model_args.update_from_config(job_config)
         self.model_args = model_args
         
-        logger.info(
-            f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
-        )
-        
         with (
             torch.device("meta"),
             utils.set_default_dtype(TORCH_DTYPE_MAP[job_config.training.dtype]),
         ):
             model = self.train_spec.model_cls(model_args)
         
-        # Build model converters (e.g., for float8)
-        model_converters = build_model_converters(job_config, parallel_dims)
-        model_converters.convert(model)
-        
-        # Apply parallelism
-        if parallel_dims.pp_enabled:
-            raise NotImplementedError("Pipeline parallelism not supported for generation")
-        else:
-            model = self.train_spec.parallelize_fn(model, parallel_dims, job_config)
-            
-            # Move to device and initialize
+        with torch.no_grad():
             init_device = self.device.type
             model.to_empty(device=init_device)
-            with torch.no_grad():
-                model.init_weights()
             model.eval()
             
             self.model_parts = [model]
@@ -141,7 +95,7 @@ class Generator:
         logger.info(f"Loaded checkpoint from step {job_config.checkpoint.load_step}")
         
         self.processor = AutoProcessor.from_pretrained(job_config.model.hf_assets_path)
-        
+
         # Load chat template
         template_path = "torchtitan/vlr/smolvlm/datasets/template.jinja"
         if os.path.exists(template_path):

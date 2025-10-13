@@ -32,6 +32,9 @@ from torchtitan.tools import utils
 from torchtitan.tools.logging import init_logger, logger
 from torchtitan.tools.utils import device_module, device_type
 
+from torchtitan.components.checkpoint import CheckpointManager
+from torchtitan.components.tokenizer import HuggingFaceTokenizer
+
 # support running w/o installing as package
 wd = Path(__file__).parent.parent.resolve()
 sys.path.append(str(wd))
@@ -143,11 +146,26 @@ def test_generate(
 
     state_dict = model.state_dict()
 
-    # Checkpoint Loading
-    begin = time.monotonic()
-    logger.info(f"Loading chkpt at: {checkpoint_path}")
-    dcp.load(state_dict, checkpoint_id=checkpoint_path)
-    logger.info(f"Finished loading chkpt in {time.monotonic() - begin:.2f} seconds.")
+    # Setup checkpoint manager for loading
+    checkpointer = CheckpointManager(
+        dataloader=None,  # No dataloader needed for generation
+        model_parts=[model],
+        optimizers=None,  # No optimizer needed for generation
+        lr_schedulers=None,  # No lr_scheduler needed for generation
+        states={},
+        checkpoint_config=config.checkpoint,
+        sd_adapter=(
+            train_spec.state_dict_adapter(
+                model_args, config.model.hf_assets_path
+            )
+        ),
+        base_folder=config.job.dump_folder,
+        ft_manager=None,  # No fault tolerance for generation
+    )
+    
+    # Load checkpoint
+    checkpointer.load(step=config.checkpoint.load_step)
+    logger.info(f"Loaded checkpoint from step {config.checkpoint.load_step}")
 
     device_mem_stats = device_memory_monitor.get_peak_stats()
     logger.info(

@@ -92,6 +92,7 @@ class Generator:
             deterministic=False,
         )
         
+        print(job_config.model.name)
         self.train_spec = train_spec_module.get_train_spec(job_config.model.name)
         
         # Build tokenizer
@@ -105,10 +106,6 @@ class Generator:
         model_args = self.train_spec.model_args[job_config.model.flavor]
         model_args.update_from_config(job_config)
         self.model_args = model_args
-        
-        logger.info(
-            f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
-        )
         
         with (
             torch.device("meta"),

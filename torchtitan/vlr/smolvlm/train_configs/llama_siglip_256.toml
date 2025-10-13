@@ -23,7 +23,7 @@ save_tb_folder = "tb"
 enable_wandb = true
 
 [model]
-name = "llama3-siglip2"
+name = "smolvlm"
 flavor = "256M"
 # test folder with tokenizer.json, for debug purpose only
 # hf_assets_path = "torchtitan/experiments/vlm/assets/tokenizer"

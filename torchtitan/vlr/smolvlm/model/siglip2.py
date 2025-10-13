@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from torchtitan.models.attention import build_attention, init_attention_mask
+from torchtitan.models.attention import ScaledDotProductAttentionWrapper
 
 from .args import Siglip2ModelArgs
 
@@ -106,9 +106,7 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(self.dim, self.dim)
         self.out_proj = nn.Linear(self.dim, self.dim)
 
-        self.attn = build_attention(
-            use_flex_attn=False, attn_mask_type=None
-        )
+        self.attn = ScaledDotProductAttentionWrapper()
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)

@@ -22,5 +22,4 @@ TORCH_NCCL_DUMP_ON_TIMEOUT=1 \
 torchrun --nproc_per_node=${NGPU} --rdzv_backend c10d --rdzv_endpoint="localhost:0" \
 --local-ranks-filter ${LOG_RANK} --role rank --tee 3 \
 -m ${INFERENCE_FILE} --job.config_file ${CONFIG_FILE} "$@" \
---checkpoint.exclude-from-loading dataloader,optimizer,lr_scheduler
-
+--checkpoint.exclude-from-loading dataloader,optimizer,lr_scheduler \

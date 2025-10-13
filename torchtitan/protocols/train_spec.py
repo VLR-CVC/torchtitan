@@ -76,12 +76,16 @@ def get_train_spec(name: str) -> TrainSpec:
 
     from torchtitan.experiments import _supported_experiments
     from torchtitan.models import _supported_models
+    from torchtitan.vlr import _supported_vlr_models
 
     if name in _supported_models:
         module = import_module(f"torchtitan.models.{name}")
         return module.get_train_spec()
     elif name in _supported_experiments:
         module = import_module(f"torchtitan.experiments.{name}")
+        return module.get_train_spec()
+    elif name in _supported_vlr_models:
+        module = import_module(f"torchtitan.vlr.{name}")
         return module.get_train_spec()
 
     raise ValueError(f"TrainSpec {name} is not registered.")

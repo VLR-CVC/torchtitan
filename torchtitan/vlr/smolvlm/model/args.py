@@ -35,6 +35,7 @@ class Llama3Siglip2ModelArgs(Llama3Args):
     tokenizer_name: str = 'HuggingFaceTB/SmolLM2-360M-Instruct'
     img_token_id: int = 49190
     vocab_size: int = 49280
+    ffn_dim: int = 1536
 
     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
         super().update_from_config(job_config, **kwargs)

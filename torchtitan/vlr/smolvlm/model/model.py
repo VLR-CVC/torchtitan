@@ -8,7 +8,7 @@ import einops as E
 import torch
 from torch import nn
 
-from torchtitan.models.attention import init_attention_mask
+from torchtitan.models.attention import ScaledDotProductAttentionWrapper
 from torchtitan.models.llama3 import Transformer as Llama3
 
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
@@ -157,10 +157,6 @@ class Llama3Siglip2Transformer(Llama3):
             patch_attention_mask: torch.BoolTensor | None = None,
             #grid_thw: torch.Tensor | None = None,
             ):
-        if self.model_args.use_flex_attn:
-            init_attention_mask(
-                    input_batch if input_batch is not None else input_ids, eos_id=self.eos_id
-                    )
 
         # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
         hidden_states = self.tok_embeddings(input_ids) if self.tok_embeddings else input_ids

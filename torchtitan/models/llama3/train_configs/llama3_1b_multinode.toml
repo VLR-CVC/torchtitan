@@ -1,14 +1,14 @@
 [job]
-dump_folder = "/gpfs/scratch/ehpc391/outputs_single_debug/"
+#dump_folder = "/gpfs/scratch/ehpc391/outputs_multinode/"
 description = "Llama 3 1B training"
 
 [profiling]
-enable_profiling = true
+enable_profiling = false
 save_traces_folder = "profile_trace"
 profile_freq = 100
 
 [metrics]
-log_freq = 1
+log_freq = 2
 save_tb_folder = "tb"
 enable_wandb = true
 
@@ -24,30 +24,31 @@ lr = 3e-4
 eps = 1e-8
 
 [lr_scheduler]
-warmup_steps = 200  # lr scheduler warm up
+warmup_steps = 0  # lr scheduler warm up
 
 [training]
-local_batch_size = 20
+local_batch_size = 25
 seq_len = 2048
 max_norm = 1.0  # grad norm clipping
-steps = 1000
+steps = 1500
 dataset = "c4"
 
 [parallelism]
-data_parallel_replicate_degree = 2
-data_parallel_shard_degree = 4
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
 tensor_parallel_degree = 1
 pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
 enable = true
-last_save_in_hf = true
+last_save_in_hf = false
 folder = "checkpoint"
-interval = 50
-last_save_model_only = true
-export_dtype = "float32"
-async_mode = "async" # ["disabled", "async", "async_with_pinned_mem"]
+interval = 250
+keep_latest_k = 2
+last_save_model_only = false
+export_dtype = "bfloat16"
+async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
 
 [compile]
 enable=true
@@ -63,7 +64,7 @@ precompute_float8_dynamic_scale_for_fsdp = false
 filter_fqns = ["output"]
 
 [comm]
-init_timeout_seconds = 3
+init_timeout_seconds = 10
 train_timeout_seconds = 3
 
 [validation]

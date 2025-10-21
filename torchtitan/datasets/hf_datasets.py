@@ -24,7 +24,7 @@ from torchtitan.datasets.utils import load_image
 
 def _load_c4_dataset(dataset_path: str, split: str):
     """Load C4 dataset with default configuration."""
-    return load_dataset(dataset_path, name="en", split=split, streaming=True)
+    return load_dataset(dataset_path, name="default", split=split, streaming=True)
 
 
 def _process_c4_text(sample: dict[str, Any]) -> str:
@@ -52,7 +52,7 @@ def _process_finevision(
 # Add your dataset here here - more information at docs/datasets.md
 DATASETS = {
     "c4": DatasetConfig(
-        path="allenai/c4",
+        path="/gpfs/scratch/ehpc391/c4",
         loader=partial(_load_c4_dataset, split="train"),
         sample_processor=_process_c4_text,
     ),

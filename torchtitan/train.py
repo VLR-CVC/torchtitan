@@ -94,6 +94,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             base_folder=job_config.job.dump_folder,
         )
         world_size = int(os.environ["WORLD_SIZE"])
+
         parallelism_config = job_config.parallelism
         self.parallel_dims = parallel_dims = ParallelDims(
             dp_shard=parallelism_config.data_parallel_shard_degree,
@@ -160,7 +161,6 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             utils.set_default_dtype(TORCH_DTYPE_MAP[job_config.training.dtype]),
         ):
             model = self.train_spec.model_cls(model_args)
-            print(model)
 
         # Build the collection of model converters. No-op if `model.converters` empty
         model_converters = build_model_converters(job_config, parallel_dims)
@@ -276,6 +276,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         # initialize device memory monitor and get peak flops for MFU calculation
         device_memory_monitor = self.metrics_processor.device_memory_monitor
         gpu_peak_flops = utils.get_peak_flops(device_memory_monitor.device_name)
+        logger.info(f"WORLD_SIZE: {world_size}")
+        logger.info(f"NUM NODES: {world_size // 4}")
         logger.info(f"Peak FLOPS used for computing MFU: {gpu_peak_flops:.3e}")
         device_mem_stats = device_memory_monitor.get_peak_stats()
         logger.info(
@@ -523,6 +525,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             global_avg_loss, global_max_loss, global_ntokens_seen = (
                 dist_utils.dist_mean(loss, parallel_dims.world_mesh["dp_cp"], ft_pg),
                 dist_utils.dist_max(loss, parallel_dims.world_mesh["dp_cp"], ft_pg),
+
+                # we are getting the global tokens seen from a dist sum
                 dist_utils.dist_sum(
                     torch.tensor(
                         self.ntokens_seen, dtype=torch.int64, device=self.device

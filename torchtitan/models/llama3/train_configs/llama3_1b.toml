@@ -15,7 +15,7 @@ enable_wandb = true
 [model]
 name = "llama3"
 flavor = "1B"
-hf_assets_path = "/gpfs/scratch/ehpc391/assets/hf/Llama-3.2-1B"
+hf_assets_path = "./assets/hf/Llama-3.2-1B"
 # converters = ["float8"]
 
 [optimizer]

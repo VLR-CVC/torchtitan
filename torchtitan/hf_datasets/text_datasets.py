@@ -19,7 +19,7 @@ from torchtitan.components.tokenizer import BaseTokenizer
 from torchtitan.config import JobConfig
 from torchtitan.hf_datasets import DatasetConfig
 from torchtitan.tools.logging import logger
-from torchtitan.datasets.utils import load_image
+from torchtitan.hf_datasets.utils import load_image
 
 
 def _load_c4_dataset(dataset_path: str, split: str):

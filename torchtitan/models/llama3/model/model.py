@@ -195,7 +195,7 @@ class Attention(nn.Module):
         if self.use_flex_attn:
             self.inner_attention = FlexAttentionWrapper()
         else:
-            self.inner_attention = ScaledDotProductAttentionWrapper()
+            self.inner_attention = ScaledDotProductAttentionWrapper(is_causal=True)
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):

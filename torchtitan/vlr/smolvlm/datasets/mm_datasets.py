@@ -25,7 +25,7 @@ from torchtitan.components.dataloader import ParallelAwareDataloader
 from torchtitan.components.tokenizer import BaseTokenizer, HuggingFaceTokenizer
 from torchtitan.config import JobConfig
 from torchtitan.tools.logging import logger
-from torchtitan.datasets.utils import load_image_PIL
+from torchtitan.hf_datasets.utils import load_image_PIL
 
 from .utils import calculate_image_tokens, process_image
 from .transform import CLIPTransform
@@ -67,11 +67,24 @@ class MMDatasetConfig:
 
 MM_DATASETS = {
     "finevision": MMDatasetConfig(
-        path="/data-net/storage/datasets/FineVision",
+        path="HuggingFaceM4/FineVision",
         loader=lambda path: load_dataset(path, split="train", name='arxivqa', streaming=True),
         sample_processor=_process_finevision_sample,
     ),
+
+    "finevision_mn5": MMDatasetConfig(
+        path="/gpfs/scratch/ehpc391/finevision/*.parquet",
+        loader=lambda path: load_dataset(path, data_files=path),
+        sample_processor=_process_finevision_sample,
+    ),
+
+    "finevision_debug_parquet": MMDatasetConfig(
+        path="/data-net/storage/datasets/FineVisionSubset/",
+        loader=lambda path: load_dataset(path, split="train", streaming=True),
+        sample_processor=_process_finevision_sample,
+    ),
 }
+
 
 
 def _validate_mm_dataset(
@@ -379,14 +392,15 @@ def build_mm_dataloader(
     batch_size = job_config.training.local_batch_size
     seq_len = job_config.training.seq_len
 
-    max_images_per_batch = job_config.training.max_images_per_batch
-    max_patches_per_image = job_config.training.max_patches_per_image
-    packing_buffer_size = job_config.training.packing_buffer_size
-    spatial_merge_size = job_config.training.spatial_merge_size
+    # TODO: magic numbers
+    max_images_per_batch = 32
+    max_patches_per_image = 512
+    packing_buffer_size = 0
+    spatial_merge_size = 2
 
     # NOTE: technically patch_size belongs to model variants, but we don't
     # have access to model_args here. To discuss later.
-    patch_size = job_config.training.patch_size
+    patch_size = 16
 
     dataset = MultiModalDataset(
         dataset_name=job_config.training.dataset,
@@ -426,7 +440,7 @@ def build_mm_dataloader(
 if __name__ == "__main__":
 
 
-    tokenizer = HuggingFaceTokenizer('/home-local/tockier/torchtitan/assets/hf/SmolVLM2-256M-Video-Instruct/')
+    tokenizer = HuggingFaceTokenizer('/home-local/tockier/torchtitan_main/assets/hf/SmolLM2-360M-Instruct/')
     dataset = MultiModalDataset(
         dataset_name='finevision',
         dataset_path='HuggingFaceM4/FineVision',

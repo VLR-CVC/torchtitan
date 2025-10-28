@@ -13,13 +13,11 @@ from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
 
 from .datasets.mm_datasets import build_mm_dataloader
 from .infra.parallelize import parallelize_vlm
-# from .infra.pipeline import pipeline_llama
 from .model.args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
 from .model.model import Llama3Siglip2Transformer
 
 __all__ = [
     "parallelize_vlm",
-    # "pipeline_llama",
     "Llama3Siglip2ModelArgs",
     "Llama3Siglip2Transformer",
     "llama3_siglip2_configs",
@@ -74,9 +72,8 @@ llama3_siglip2_configs = {
 }
 
 
-register_train_spec(
-    TrainSpec(
-        name="llama3-siglip2",
+def get_train_spec() -> TrainSpec:
+    return TrainSpec(
         model_cls=Llama3Siglip2Transformer,
         model_args=llama3_siglip2_configs,
         parallelize_fn=parallelize_vlm,
@@ -87,6 +84,4 @@ register_train_spec(
         build_tokenizer_fn=build_hf_tokenizer,
         build_loss_fn=build_cross_entropy_loss,
         build_validator_fn=build_validator,
-        # state_dict_adapter=Llama3StateDictAdapter,
     )
-)

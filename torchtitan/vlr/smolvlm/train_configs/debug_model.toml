@@ -43,7 +43,7 @@ local_batch_size = 9
 seq_len = 2048
 max_norm = 1.0  # grad norm clipping
 steps = 13100
-dataset = "finevision"
+dataset = "finevision_debug_parquet"
 #dataset = "cc12m"
 
 [data]
@@ -68,14 +68,14 @@ pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
-enable = true
+enable = false
 folder = "checkpoint"
 interval = 50
 last_save_model_only = false
 #initial_load_in_hf = true
 #last_save_in_hf = true
 export_dtype = "bfloat16"
-async_mode = "async"  # ["disabled", "async", "async_with_pinned_mem"]
+async_mode = "disabled"  # ["disabled", "async", "async_with_pinned_mem"]
 
 [activation_checkpoint]
 mode = "selective"  # ["none", "selective", "full"]

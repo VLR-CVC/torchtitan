@@ -8,7 +8,6 @@ import einops as E
 import torch
 from torch import nn
 
-from torchtitan.models.attention import init_attention_mask
 from torchtitan.models.llama3 import Transformer as Llama3
 
 from .args import Llama3Siglip2ModelArgs, Siglip2ModelArgs
@@ -165,7 +164,7 @@ class Llama3Siglip2Transformer(Llama3):
             hidden_states = self._fuse_vision_text(hidden_states, vision_tokens, input_ids)
 
         for layer in self.layers.values():
-            hidden_states = layer(hidden_states, self.freqs_cis)
+            hidden_states = layer(hidden_states, self.freqs_cis, attention_masks=None)
 
         hidden_states = self.norm(hidden_states)
         output = self.output(hidden_states)
